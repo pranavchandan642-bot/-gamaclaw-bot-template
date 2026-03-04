@@ -346,5 +346,4 @@ module.exports = {
   parseUPIMessage, parseUPIHistory, getSportsScore, writeSocialPost, calculateEMI,
   reviewResume, writeContract, getCommodityPrice, checkTrainStatus,
   trackOrder, transcribeMeeting,
-};/ /   g r o q  
- 
+};
