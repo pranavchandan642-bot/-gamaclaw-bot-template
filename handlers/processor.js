@@ -384,24 +384,19 @@ Reply *send* ✅ or *cancel* ❌`;
     case 'SET_REMINDER': {
       const reminder = await ai.extractReminder(text);
       if (!reminder) return '❌ Try: "Remind me to take medicine daily at 9pm"';
-      // Save to DB
-      await db.supabase.from('reminders').insert({
-        user_id: user.id || platformId,
-        text: reminder.text,
-        time: reminder.time,
-        date: reminder.date,
-        recurring: reminder.recurring,
-        day_of_week: reminder.day_of_week,
-        active: true,
-        created_at: new Date().toISOString(),
-      }).catch(() => {});
-      return `⏰ *Reminder Set!*\n\n📝 ${reminder.text}\n🕐 ${reminder.time}${reminder.recurring !== 'once' ? `\n🔄 ${reminder.recurring}` : ''}`;
+      try {
+        await db.saveReminder(user.id || platformId, reminder);
+      } catch (e) { console.error('Reminder save error:', e.message); }
+      const recurText = reminder.recurring !== 'once' ? `\n🔄 ${reminder.recurring}` : '';
+      const dateText = reminder.date ? `\n📅 ${reminder.date}` : '';
+      return `⏰ *Reminder Set!*\n\n📝 ${reminder.text}\n🕐 ${reminder.time}${dateText}${recurText}\n\n_I'll remind you at the right time!_`;
     }
 
     case 'VIEW_REMINDERS': {
-      const { data: reminders } = await db.supabase.from('reminders').select('*').eq('user_id', user.id || platformId).eq('active', true).order('time');
-      if (!reminders?.length) return '⏰ No active reminders. Say "Remind me to..." to add one!';
-      return `⏰ *Your Reminders:*\n\n` + reminders.map((r, i) => `${i+1}. ${r.text}\n   🕐 ${r.time} · ${r.recurring}`).join('\n\n');
+      const reminders = await db.getReminders(user.id || platformId);
+      if (!reminders.length) return '⏰ No active reminders.\n\nSay "Remind me daily at 7pm to call mom" to add one!';
+      return `⏰ *Your Reminders (${reminders.length}):*\n\n` + 
+        reminders.map((r, i) => `${i+1}. *${r.text}*\n   🕐 ${r.time} · 🔄 ${r.recurring}`).join('\n\n');
     }
 
     case 'INVOICE': {

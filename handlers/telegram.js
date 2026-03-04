@@ -2,18 +2,32 @@ const TelegramBot = require('node-telegram-bot-api');
 const { processMessage } = require('./processor');
 const axios = require('axios');
 
-// Clear any existing webhook first, then start polling
-const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, {
-  polling: {
-    autoStart: false,
-    params: { timeout: 10, allowed_updates: ['message'] }
-  }
-});
+// Use webhook mode to avoid 409 conflicts
+const express = require('express');
+const app = require('../index').app;
 
-// Delete webhook and drop pending updates before polling
-bot.deleteWebHook({ drop_pending_updates: true })
-  .then(() => bot.startPolling())
-  .catch(err => console.error('Webhook clear error:', err.message));
+const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { webHook: false });
+
+// Clear any old webhook and start fresh polling with conflict prevention
+async function startBot() {
+  try {
+    // First stop any existing polling
+    await bot.stopPolling();
+    // Delete webhook and drop all pending updates
+    await bot.deleteWebHook({ drop_pending_updates: true });
+    // Wait a moment
+    await new Promise(r => setTimeout(r, 2000));
+    // Start fresh polling
+    await bot.startPolling({ restart: false });
+    console.log('🤖 Telegram bot started');
+  } catch (err) {
+    console.error('Bot start error:', err.message);
+    // Retry after 5 seconds
+    setTimeout(startBot, 5000);
+  }
+}
+
+startBot();
 
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
@@ -39,18 +53,31 @@ bot.on('message', async (msg) => {
       response = await processMessage(platformId, 'telegram', text, userName);
     }
 
-    await bot.sendMessage(chatId, response, {
-      parse_mode: 'Markdown',
-      disable_web_page_preview: true,
-    });
+    // Try sending with Markdown first, fallback to plain text if it fails
+    try {
+      await bot.sendMessage(chatId, response, {
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true,
+      });
+    } catch (markdownErr) {
+      // Markdown failed — send as plain text
+      console.error('Markdown error, retrying as plain text:', markdownErr.message);
+      await bot.sendMessage(chatId, response.replace(/[*_`]/g, ''), {
+        disable_web_page_preview: true,
+      });
+    }
 
   } catch (err) {
-    console.error('Telegram error:', err);
-    await bot.sendMessage(chatId, '⚠️ Something went wrong. Please try again!');
+    console.error('Telegram error FULL:', err.message, err.stack);
+    // Send the actual error in dev mode so we can debug
+    const isDev = process.env.NODE_ENV !== 'production';
+    await bot.sendMessage(chatId, isDev
+      ? '⚠️ Error: ' + err.message
+      : '⚠️ Something went wrong. Please try again!'
+    );
   }
 });
 
 bot.on('polling_error', (err) => console.error('Polling error:', err.message));
-console.log('🤖 Telegram bot started');
 
 module.exports = bot;

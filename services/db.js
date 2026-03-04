@@ -232,6 +232,32 @@ async function getLeads(userId, status = null) {
   return data || [];
 }
 
+// ── REMINDERS ─────────────────────────────────────────────────────────────────
+
+async function saveReminder(userId, reminder) {
+  const { error } = await supabase.from('reminders').insert({
+    user_id: userId,
+    text: reminder.text,
+    time: reminder.time,
+    date: reminder.date || null,
+    recurring: reminder.recurring || 'once',
+    day_of_week: reminder.day_of_week || null,
+    active: true,
+    created_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
+}
+
+async function getReminders(userId) {
+  const { data } = await supabase
+    .from('reminders')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('active', true)
+    .order('time');
+  return data || [];
+}
+
 module.exports = {
   supabase,
   getOrCreateUser,
@@ -241,6 +267,8 @@ module.exports = {
   saveMemory,
   getMemory,
   deleteMemory,
+  saveReminder,
+  getReminders,
   getMemories,
   getMemoryString,
   logExpense,
