@@ -237,7 +237,6 @@ Reply *send* ✅ or *cancel* ❌`;
       const draft = await ai.draftEmail(text, memoryCtx);
       if (!draft) return '❌ Could not draft email. Try: "Send email to john@gmail.com about meeting"';
       await savePendingEmail(user.id || platformId, draft);
-      p = getPending(user.id || platformId);
       if (!draft.to) {
         p.awaitingEmailAddress = true;
         return `📧 *Email Draft Ready!*\n\n*Subject:* ${draft.subject}\n\n*Body:*\n${draft.body}\n\n❓ Who should I send this to? Reply with the email address.`;
