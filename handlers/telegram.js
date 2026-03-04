@@ -2,7 +2,18 @@ const TelegramBot = require('node-telegram-bot-api');
 const { processMessage } = require('./processor');
 const axios = require('axios');
 
-const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
+// Clear any existing webhook first, then start polling
+const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, {
+  polling: {
+    autoStart: false,
+    params: { timeout: 10, allowed_updates: ['message'] }
+  }
+});
+
+// Delete webhook and drop pending updates before polling
+bot.deleteWebHook({ drop_pending_updates: true })
+  .then(() => bot.startPolling())
+  .catch(err => console.error('Webhook clear error:', err.message));
 
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;

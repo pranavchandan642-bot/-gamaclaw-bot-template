@@ -8,30 +8,56 @@ const supabase = createClient(
 // ── USER MANAGEMENT ───────────────────────────────────────────────────────────
 
 async function getOrCreateUser(platformId, platform, name = '') {
-  let { data: user } = await supabase
-    .from('users')
-    .select('*')
-    .eq('platform_id', platformId)
-    .eq('platform', platform)
-    .single();
-
-  if (!user) {
-    const { data: newUser } = await supabase
+  try {
+    let { data: user, error } = await supabase
       .from('users')
-      .insert({
-        platform_id: platformId,
-        platform,
-        name,
-        plan: 'free',
-        messages_today: 0,
-        messages_reset_date: new Date().toISOString().split('T')[0],
-        created_at: new Date().toISOString(),
-      })
-      .select()
+      .select('*')
+      .eq('platform_id', platformId)
+      .eq('platform', platform)
       .single();
-    user = newUser;
+
+    if (!user) {
+      const { data: newUser, error: insertError } = await supabase
+        .from('users')
+        .insert({
+          platform_id: platformId,
+          platform,
+          name,
+          plan: 'free',
+          messages_today: 0,
+          messages_reset_date: new Date().toISOString().split('T')[0],
+          created_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error('User insert error:', insertError.message);
+        // Return a fallback user object so bot doesn't crash
+        return {
+          id: platformId,
+          platform_id: platformId,
+          platform,
+          name,
+          plan: 'free',
+          messages_today: 0,
+        };
+      }
+      user = newUser;
+    }
+    return user;
+  } catch (err) {
+    console.error('getOrCreateUser error:', err.message);
+    // Fallback user so bot never crashes
+    return {
+      id: platformId,
+      platform_id: platformId,
+      platform,
+      name,
+      plan: 'free',
+      messages_today: 0,
+    };
   }
-  return user;
 }
 
 async function updateUser(platformId, platform, updates) {
