@@ -129,6 +129,22 @@ async function getMemoryString(userId) {
   return '\nUser memory:\n' + memories.map(m => `- ${m.key}: ${m.value}`).join('\n');
 }
 
+async function getMemory(userId, key) {
+  const { data } = await supabase
+    .from('memories')
+    .select('value')
+    .eq('user_id', userId)
+    .eq('key', key)
+    .single();
+  return data?.value || null;
+}
+
+async function deleteMemory(userId, key) {
+  await supabase.from('memories').delete()
+    .eq('user_id', userId)
+    .eq('key', key);
+}
+
 // ── EXPENSES ──────────────────────────────────────────────────────────────────
 
 async function logExpense(userId, amount, category, note) {
@@ -223,6 +239,8 @@ module.exports = {
   checkLimit,
   incrementMessageCount,
   saveMemory,
+  getMemory,
+  deleteMemory,
   getMemories,
   getMemoryString,
   logExpense,

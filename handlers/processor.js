@@ -3,12 +3,43 @@ const db = require('../services/db');
 const emailSvc = require('../services/email');
 const calendarSvc = require('../services/calendar');
 
-// Pending actions per user (in-memory, fine for MVP)
-const pending = {};
+// Pending actions per user - persisted in Supabase memories
+const pendingCache = {};
 
 function getPending(userId) {
-  if (!pending[userId]) pending[userId] = {};
-  return pending[userId];
+  if (!pendingCache[userId]) pendingCache[userId] = {};
+  return pendingCache[userId];
+}
+
+async function savePendingEmail(userId, emailData) {
+  pendingCache[userId] = pendingCache[userId] || {};
+  pendingCache[userId].pendingEmail = emailData;
+  pendingCache[userId].awaitingEmailConfirm = true;
+  // Also save to DB so it survives server restarts
+  await db.saveMemory(userId, 'pending_email', JSON.stringify(emailData)).catch(()=>{});
+}
+
+async function loadPendingEmail(userId) {
+  if (pendingCache[userId]?.pendingEmail) return pendingCache[userId].pendingEmail;
+  try {
+    const mem = await db.getMemory(userId, 'pending_email');
+    if (mem) {
+      const email = JSON.parse(mem);
+      pendingCache[userId] = pendingCache[userId] || {};
+      pendingCache[userId].pendingEmail = email;
+      pendingCache[userId].awaitingEmailConfirm = true;
+      return email;
+    }
+  } catch {}
+  return null;
+}
+
+async function clearPendingEmail(userId) {
+  if (pendingCache[userId]) {
+    pendingCache[userId].pendingEmail = null;
+    pendingCache[userId].awaitingEmailConfirm = false;
+  }
+  await db.deleteMemory(userId, 'pending_email').catch(()=>{});
 }
 
 // ── UPGRADE MESSAGE ───────────────────────────────────────────────────────────
@@ -126,33 +157,47 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   }
 
   // ── PENDING EMAIL CONFIRM ─────────────────────────────────────────────────
-  if (p.awaitingEmailConfirm || p.pendingEmail) {
+  // ── PENDING EMAIL CHECK (survives server restarts) ──────────────────────────
+  const pendingEmail = await loadPendingEmail(user.id || platformId);
+  if (pendingEmail) {
     const t = text.toLowerCase().trim();
-    const isSend = t === 'send' || t === 'yes' || t === 'ok' || t === 'okay' || 
-                   t === 'confirm' || t === 'y' || t.includes('send it') || 
-                   t.includes('send now') || t.includes('go ahead') || t === 'sure';
-    const isCancel = t === 'cancel' || t === 'no' || t === 'stop' || t === 'dont send';
+    const isSend = ['send','yes','ok','okay','confirm','y','sure','haan','kar do',
+                    'bhej do','send karo'].some(w => t === w) || 
+                   t.includes('send it') || t.includes('send now') || 
+                   t.includes('go ahead') || t.includes('yes send') ||
+                   t.includes('bhej') || t.includes('kar do');
+    const isCancel = ['cancel','no','nahi','mat bhejo','stop','dont send'].some(w => t === w);
     const isEdit = t === 'edit' || t === 'change' || t === 'redo' || t.includes('edit');
-    
+
     if (isSend) {
-      p.awaitingEmailConfirm = false;
-      return await sendPendingEmail(p, user);
+      try {
+        await emailSvc.sendEmail(pendingEmail.to, pendingEmail.subject, pendingEmail.body);
+        await clearPendingEmail(user.id || platformId);
+        return `✅ *Email sent successfully!*
+
+📧 To: ${pendingEmail.to}
+📝 Subject: ${pendingEmail.subject}
+
+_Delivered via GamaClaw 🦀_`;
+      } catch (e) {
+        await clearPendingEmail(user.id || platformId);
+        return `❌ Failed to send: ${e.message}`;
+      }
     } else if (isCancel) {
-      p.awaitingEmailConfirm = false;
-      p.pendingEmail = null;
+      await clearPendingEmail(user.id || platformId);
       return '❌ Email cancelled.';
     } else if (isEdit) {
-      p.awaitingEmailConfirm = false;
-      p.pendingEmail = null;
+      await clearPendingEmail(user.id || platformId);
       return '✏️ Tell me what changes you want and I\'ll redraft it.';
+    } else {
+      // Remind user about pending email
+      return `📧 *You have an unsent email!*
+
+*To:* ${pendingEmail.to}
+*Subject:* ${pendingEmail.subject}
+
+Reply *send* ✅ or *cancel* ❌`;
     }
-    // If none matched, remind user
-    return `📧 *Email ready to send!*
-
-*To:* ${p.pendingEmail?.to}
-*Subject:* ${p.pendingEmail?.subject}
-
-Reply *send* to send ✅ or *cancel* to cancel ❌`;
   }
 
   // ── PENDING EMAIL ADDRESS ────────────────────────────────────────────────
@@ -190,7 +235,9 @@ Reply *send* to send ✅ or *cancel* to cancel ❌`;
 
     case 'SEND_EMAIL': {
       const draft = await ai.draftEmail(text, memoryCtx);
-      p.pendingEmail = draft;
+      if (!draft) return '❌ Could not draft email. Try: "Send email to john@gmail.com about meeting"';
+      await savePendingEmail(user.id || platformId, draft);
+      p = getPending(user.id || platformId);
       if (!draft.to) {
         p.awaitingEmailAddress = true;
         return `📧 *Email Draft Ready!*\n\n*Subject:* ${draft.subject}\n\n*Body:*\n${draft.body}\n\n❓ Who should I send this to? Reply with the email address.`;
