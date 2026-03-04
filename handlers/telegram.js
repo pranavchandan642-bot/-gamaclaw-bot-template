@@ -9,25 +9,26 @@ const app = require('../index').app;
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { webHook: false });
 
 // Clear any old webhook and start fresh polling with conflict prevention
+let pollRetries = 0;
 async function startBot() {
   try {
-    // First stop any existing polling
-    await bot.stopPolling();
-    // Delete webhook and drop all pending updates
+    await bot.stopPolling().catch(() => {});
+    await new Promise(r => setTimeout(r, 3000));
     await bot.deleteWebHook({ drop_pending_updates: true });
-    // Wait a moment
-    await new Promise(r => setTimeout(r, 2000));
-    // Start fresh polling
-    await bot.startPolling({ restart: false });
+    await new Promise(r => setTimeout(r, 3000));
+    await bot.startPolling({ restart: false, polling: { interval: 2000, timeout: 10 } });
+    pollRetries = 0;
     console.log('🤖 Telegram bot started');
   } catch (err) {
-    console.error('Bot start error:', err.message);
-    // Retry after 5 seconds
-    setTimeout(startBot, 5000);
+    pollRetries++;
+    const delay = Math.min(pollRetries * 5000, 30000);
+    console.error(`Bot start error (retry ${pollRetries} in ${delay/1000}s):`, err.message);
+    setTimeout(startBot, delay);
   }
 }
 
-startBot();
+// Delay initial start to let old instance fully shut down
+setTimeout(startBot, 5000);
 
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
@@ -78,6 +79,9 @@ bot.on('message', async (msg) => {
   }
 });
 
-bot.on('polling_error', (err) => console.error('Polling error:', err.message));
+bot.on('polling_error', (err) => {
+  if (err.message.includes('409')) return; // harmless conflict during deploy
+  console.error('Polling error:', err.message);
+});
 
 module.exports = bot;

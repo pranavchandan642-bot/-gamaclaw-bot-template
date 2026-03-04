@@ -122,21 +122,65 @@ async function chat(message, history = [], memoryContext = '') {
 
 // ── WEATHER ───────────────────────────────────────────────────────────────────
 async function getWeather(message) {
-  const city = await ask(`Extract city name from: "${message}". Reply with ONLY the city name.`);
+  const city = await ask(`Extract only the city name from: "${message}". Reply with ONLY the city name, nothing else.`);
+  const fetch = require('node-fetch');
+
+  // Primary: Open-Meteo (free, no key, very reliable)
   try {
-    const fetch = require('node-fetch');
+    const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`);
+    const geoData = await geoRes.json();
+    if (geoData.results?.length) {
+      const { latitude, longitude, name, country } = geoData.results[0];
+      const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code,apparent_temperature&timezone=auto`);
+      const w = await wRes.json();
+      const c = w.current;
+      const desc = getWeatherDesc(c.weather_code);
+      return `🌤️ *Weather in ${name}, ${country}*
+
+🌡️ *${c.temperature_2m}°C* (feels like ${c.apparent_temperature}°C)
+☁️ ${desc}
+💧 Humidity: ${c.relative_humidity_2m}%
+💨 Wind: ${c.wind_speed_10m} km/h`;
+    }
+  } catch(e) { console.log('Open-Meteo failed:', e.message); }
+
+  // Fallback: wttr.in
+  try {
     const res = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=j1`);
-    const data = await res.json();
-    const c = data.current_condition[0];
-    const area = data.nearest_area[0].areaName[0].value;
-    const country = data.nearest_area[0].country[0].value;
-    return `🌤️ *Weather in ${area}, ${country}*\n\n🌡️ *${c.temp_C}°C* (feels like ${c.FeelsLikeC}°C)\n☁️ ${c.weatherDesc[0].value}\n💧 Humidity: ${c.humidity}%\n💨 Wind: ${c.windspeedKmph} km/h`;
-  } catch {
-    return `❌ Could not fetch weather for *${city}*. Try: "Weather in Mumbai"`;
-  }
+    if (res.ok) {
+      const data = await res.json();
+      const c = data.current_condition[0];
+      const area = data.nearest_area[0].areaName[0].value;
+      const country = data.nearest_area[0].country[0].value;
+      return `🌤️ *Weather in ${area}, ${country}*
+
+🌡️ *${c.temp_C}°C* (feels like ${c.FeelsLikeC}°C)
+☁️ ${c.weatherDesc[0].value}
+💧 Humidity: ${c.humidity}%
+💨 Wind: ${c.windspeedKmph} km/h`;
+    }
+  } catch(e) { console.log('wttr.in failed:', e.message); }
+
+  // Final fallback: Groq AI estimate
+  const result = await ask(`What is the typical current weather in ${city}, India right now in March? Give realistic temperature, conditions, humidity.`);
+  return `🌤️ *Weather in ${city}*
+
+${result}
+
+_⚠️ Live data unavailable — AI estimate_`;
 }
 
-// ── NEWS ──────────────────────────────────────────────────────────────────────
+function getWeatherDesc(code) {
+  if (code === 0) return 'Clear sky ☀️';
+  if (code <= 3) return 'Partly cloudy ⛅';
+  if (code <= 49) return 'Foggy 🌫️';
+  if (code <= 67) return 'Rainy 🌧️';
+  if (code <= 77) return 'Snowy ❄️';
+  if (code <= 82) return 'Showers 🌦️';
+  if (code <= 99) return 'Thunderstorm ⛈️';
+  return 'Unknown';
+}
+
 async function getNews(message) {
   const topic = await ask(`Extract news topic from: "${message}". Reply with ONLY 2-4 words.`);
   const apiKey = process.env.NEWS_API_KEY;
