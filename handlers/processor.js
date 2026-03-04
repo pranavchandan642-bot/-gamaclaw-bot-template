@@ -126,19 +126,33 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   }
 
   // ── PENDING EMAIL CONFIRM ─────────────────────────────────────────────────
-  if (p.awaitingEmailConfirm) {
-    if (text.toUpperCase() === 'SEND') {
+  if (p.awaitingEmailConfirm || p.pendingEmail) {
+    const t = text.toLowerCase().trim();
+    const isSend = t === 'send' || t === 'yes' || t === 'ok' || t === 'okay' || 
+                   t === 'confirm' || t === 'y' || t.includes('send it') || 
+                   t.includes('send now') || t.includes('go ahead') || t === 'sure';
+    const isCancel = t === 'cancel' || t === 'no' || t === 'stop' || t === 'dont send';
+    const isEdit = t === 'edit' || t === 'change' || t === 'redo' || t.includes('edit');
+    
+    if (isSend) {
       p.awaitingEmailConfirm = false;
       return await sendPendingEmail(p, user);
-    } else if (text.toUpperCase() === 'CANCEL') {
+    } else if (isCancel) {
       p.awaitingEmailConfirm = false;
       p.pendingEmail = null;
       return '❌ Email cancelled.';
-    } else if (text.toUpperCase() === 'EDIT') {
+    } else if (isEdit) {
       p.awaitingEmailConfirm = false;
       p.pendingEmail = null;
       return '✏️ Tell me what changes you want and I\'ll redraft it.';
     }
+    // If none matched, remind user
+    return `📧 *Email ready to send!*
+
+*To:* ${p.pendingEmail?.to}
+*Subject:* ${p.pendingEmail?.subject}
+
+Reply *send* to send ✅ or *cancel* to cancel ❌`;
   }
 
   // ── PENDING EMAIL ADDRESS ────────────────────────────────────────────────
