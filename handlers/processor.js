@@ -464,7 +464,47 @@ Reply *send* ✅ or *cancel* ❌`;
     }
 
     default: {
-      // General chat
+      // Smart fallback — handle ANY task the user throws at the bot
+      // First check if it's a task we can partially handle with existing tools
+      const lowerText = text.toLowerCase();
+      
+      // Detect if user is asking for calculation even if EMI_CALC intent missed
+      if ((lowerText.includes('calculate') || lowerText.includes('calc') || lowerText.includes('how much')) &&
+          (lowerText.includes('%') || lowerText.includes('percent') || lowerText.includes('interest') || 
+           lowerText.includes('emi') || lowerText.includes('loan'))) {
+        const result = await ai.calculateEMI(text).catch(() => null);
+        if (result && !result.includes('❌')) {
+          await db.saveMessage(user.id || platformId, 'user', text);
+          await db.saveMessage(user.id || platformId, 'assistant', result);
+          return result;
+        }
+      }
+
+      // Detect if user wants translation even if TRANSLATE intent missed
+      if (lowerText.includes('translate') || lowerText.includes('in hindi') || 
+          lowerText.includes('in english') || lowerText.includes('in marathi') ||
+          lowerText.includes('ko hindi') || lowerText.includes('meaning of')) {
+        const result = await ai.translateText(text).catch(() => null);
+        if (result && !result.includes('❌')) {
+          await db.saveMessage(user.id || platformId, 'user', text);
+          await db.saveMessage(user.id || platformId, 'assistant', result);
+          return result;
+        }
+      }
+
+      // Detect weather even if WEATHER intent missed  
+      if (lowerText.includes('weather') || lowerText.includes('temperature') || 
+          lowerText.includes('mausam') || lowerText.includes('barish') ||
+          lowerText.includes('rain') || lowerText.includes('hot') && lowerText.includes('in ')) {
+        const result = await ai.getWeather(text).catch(() => null);
+        if (result && !result.includes('❌')) {
+          await db.saveMessage(user.id || platformId, 'user', text);
+          await db.saveMessage(user.id || platformId, 'assistant', result);
+          return result;
+        }
+      }
+
+      // Final fallback: Smart AI chat that can handle ANYTHING
       const reply = await ai.chat(text, history, memoryCtx);
       await db.saveMessage(user.id || platformId, 'user', text);
       await db.saveMessage(user.id || platformId, 'assistant', reply);
