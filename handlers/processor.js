@@ -156,7 +156,18 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   await db.incrementMessageCount(user);
 
   // ── INTENT DETECTION ──────────────────────────────────────────────────────
-  const intent = await ai.detectIntent(text);
+  const VALID_INTENTS = ['SEND_EMAIL','READ_CALENDAR','ADD_CALENDAR','SUMMARIZE',
+    'LOG_EXPENSE','VIEW_EXPENSES','ADD_PRICE_ALERT','VIEW_PRICE_ALERTS','SAVE_MEMORY',
+    'MORNING_BRIEFING','ADD_LEAD','VIEW_LEADS','DRAFT_FOLLOWUP','VOICE_NOTE',
+    'UPGRADE_PLAN','VIEW_PLAN','HELP','WEATHER','NEWS','WEB_SEARCH','SET_REMINDER',
+    'VIEW_REMINDERS','INVOICE','FLIGHT_SEARCH','TRAIN_SEARCH','TRANSLATE','UPI_PARSE',
+    'UPI_HISTORY','SPORTS_SCORE','SOCIAL_POST','EMI_CALC','REVIEW_RESUME',
+    'WRITE_CONTRACT','COMMODITY_PRICE','TRAIN_STATUS','TRACK_ORDER',
+    'TRANSCRIBE_MEETING','CHAT'];
+  let rawIntent = 'CHAT';
+  try { rawIntent = await ai.detectIntent(text); } catch {}
+  const intent = VALID_INTENTS.includes(rawIntent.trim().toUpperCase()) 
+    ? rawIntent.trim().toUpperCase() : 'CHAT';
   const memoryCtx = await db.getMemoryString(user.id || platformId);
   const history = await db.getRecentMessages(user.id || platformId);
 
