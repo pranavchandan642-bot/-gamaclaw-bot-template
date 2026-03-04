@@ -57,7 +57,26 @@ function helpMessage(plan) {
     (isPro ? `*🧠 Memory*\n"Remember my boss email is john@acme.com"\n\n` : '') +
     (isPro ? `*☀️ Briefing*\n"/briefing" — Get your daily summary\n\n` : '') +
     (plan === 'business' ? `*🎯 Leads*\n"Add lead: John from LinkedIn, email john@co.com"\n"Show my leads" / "Draft follow-up for John"\n\n` : '') +
-    `*/plan* — View your plan\n*/upgrade* — See pricing\n*/help* — This message\n\n` +
+    `*🌤️ Weather:* "Weather in Mumbai"\n` +
+  `*📰 News:* "Latest news about AI startups"\n` +
+  `*🔍 Research:* "Research Tesla competitors"\n` +
+  `*✈️ Flights:* "Flights Delhi to Mumbai tomorrow"\n` +
+  `*🚂 Trains:* "Trains Mumbai to Pune Friday"\n` +
+  `*🌍 Translate:* "Translate hello to Hindi"\n` +
+  `*💳 UPI:* Paste any UPI SMS to parse it\n` +
+  `*🏏 Sports:* "India cricket score"\n` +
+  `*📱 Social:* "Write LinkedIn post about my startup"\n` +
+  `*🧮 EMI:* "EMI for ₹40L at 8.5% 20 years"\n` +
+  `*⏰ Remind:* "Remind me daily at 7pm to call mom"\n` +
+  `*🧾 Invoice:* "Invoice for Rahul ₹15,000 design work"\n` +
+  `*📄 Resume:* "Review my resume: [paste resume text]"\n` +
+  `*🤝 Contract:* "Write a freelance contract for web design ₹50,000"\n` +
+  `*🏦 Gold Price:* "What's today's gold price?"\n` +
+  `*🚂 Train Status:* "Check train status 12951"\n` +
+  `*📦 Track Order:* "Track my Amazon order 403-1234567"\n` +
+  `*💳 UPI History:* Paste multiple UPI SMS messages for summary\n` +
+  `*📞 Transcribe:* Send a voice note of your meeting → summary\n\n` +
+  `*/plan* — View your plan\n*/upgrade* — See pricing\n*/help* — This message\n\n` +
     (!isPro ? `⭐ Type */upgrade* to unlock calendar, expenses, voice & more!` : `🎉 You have full Pro access!`);
 }
 
@@ -281,6 +300,102 @@ async function processMessage(platformId, platform, messageText, userName = '', 
 
     case 'HELP':
       return helpMessage(user.plan);
+
+    case 'WEATHER':
+      return await ai.getWeather(text);
+
+    case 'NEWS':
+      return await ai.getNews(text);
+
+    case 'WEB_SEARCH':
+      return await ai.webSearch(text);
+
+    case 'SET_REMINDER': {
+      const reminder = await ai.extractReminder(text);
+      if (!reminder) return '❌ Try: "Remind me to take medicine daily at 9pm"';
+      // Save to DB
+      await db.supabase.from('reminders').insert({
+        user_id: user.id || platformId,
+        text: reminder.text,
+        time: reminder.time,
+        date: reminder.date,
+        recurring: reminder.recurring,
+        day_of_week: reminder.day_of_week,
+        active: true,
+        created_at: new Date().toISOString(),
+      }).catch(() => {});
+      return `⏰ *Reminder Set!*\n\n📝 ${reminder.text}\n🕐 ${reminder.time}${reminder.recurring !== 'once' ? `\n🔄 ${reminder.recurring}` : ''}`;
+    }
+
+    case 'VIEW_REMINDERS': {
+      const { data: reminders } = await db.supabase.from('reminders').select('*').eq('user_id', user.id || platformId).eq('active', true).order('time');
+      if (!reminders?.length) return '⏰ No active reminders. Say "Remind me to..." to add one!';
+      return `⏰ *Your Reminders:*\n\n` + reminders.map((r, i) => `${i+1}. ${r.text}\n   🕐 ${r.time} · ${r.recurring}`).join('\n\n');
+    }
+
+    case 'INVOICE': {
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('email')) {
+        return `📊 Invoice generation is a *Pro feature*!${upgradeMessage(user.plan)}`;
+      }
+      const invoiceDetails = await ai.extractInvoiceDetails(text);
+      if (!invoiceDetails) return '❌ Try: "Generate invoice for Rahul ₹15,000 for web design"';
+      const invoiceText = await ai.generateInvoiceText(invoiceDetails);
+      if (invoiceDetails.client_email) {
+        p.pendingEmail = { to: invoiceDetails.client_email, subject: `Invoice ${invoiceDetails.invoice_number}`, body: invoiceText.replace(/[*_]/g, '') };
+        p.awaitingEmailConfirm = true;
+        return `${invoiceText}\n\nReply *SEND* to email this to ${invoiceDetails.client_email} or *CANCEL* to skip.`;
+      }
+      return invoiceText;
+    }
+
+    case 'FLIGHT_SEARCH':
+      return await ai.searchFlights(text);
+
+    case 'TRAIN_SEARCH':
+      return await ai.searchTrains(text);
+
+    case 'TRANSLATE':
+      return await ai.translateText(text);
+
+    case 'UPI_PARSE': {
+      const upiResult = await ai.parseUPIMessage(text);
+      // Auto-suggest logging
+      p.lastUPIAmount = upiResult;
+      return upiResult;
+    }
+
+    case 'SPORTS_SCORE':
+      return await ai.getSportsScore(text);
+
+    case 'SOCIAL_POST':
+      return await ai.writeSocialPost(text);
+
+    case 'EMI_CALC':
+      return await ai.calculateEMI(text);
+
+    case 'REVIEW_RESUME':
+      return await ai.reviewResume(text);
+
+    case 'WRITE_CONTRACT':
+      return await ai.writeContract(text);
+
+    case 'COMMODITY_PRICE':
+      return await ai.getCommodityPrice(text);
+
+    case 'TRAIN_STATUS':
+      return await ai.checkTrainStatus(text);
+
+    case 'TRACK_ORDER':
+      return await ai.trackOrder(text);
+
+    case 'UPI_HISTORY':
+      return await ai.parseUPIHistory(text);
+
+    case 'TRANSCRIBE_MEETING': {
+      // User sends a voice/audio file - handled in telegram.js
+      // If they paste text notes, summarize them
+      return await ai.summarizeMeeting(text);
+    }
 
     default: {
       // General chat
