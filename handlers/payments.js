@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
+const db = require('../services/db');
 
 // ── Razorpay instance ─────────────────────────────────────────────────────────
 const razorpay = new Razorpay({
@@ -85,30 +86,54 @@ router.post('/razorpay', express.json({ type: '*/*' }), async (req, res) => {
       const newPlan = planId.includes('business') ? 'business' : 'pro';
       const messagesPerDay = planId.includes('business') ? 999999 : 500;
 
-      // Upgrade user in Supabase
-      const { createClient } = require('@supabase/supabase-js');
-      const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-      await supabase.from('users').update({
-        plan: newPlan,
-        messages_per_day: messagesPerDay,
-        plan_started_at: new Date().toISOString(),
-        razorpay_payment_id: paymentData.id,
-      }).eq('id', userId);
+      // Get user's phone for cross-platform upgrade
+      const { data: paidUser } = await db.supabase
+        .from('users')
+        .select('phone, platform_id, platform')
+        .eq('id', userId)
+        .single();
 
-      console.log(`✅ User ${userId} upgraded to ${newPlan}`);
+      // Upgrade user + all linked accounts across platforms
+      await db.upgradeAllLinkedAccounts(
+        userId,
+        paidUser?.phone,
+        newPlan,
+        messagesPerDay,
+        paymentData.id
+      );
+
+      console.log(`✅ User ${userId} upgraded to ${newPlan} (phone: ${paidUser?.phone || 'none'})`);
 
       // Notify user on Telegram
       try {
-        const { supabase: db } = require('../services/db');
-        const { data: user } = await db.from('users').select('telegram_id').eq('id', userId).single();
-        if (user && user.telegram_id) {
+        const { data: telegramUser } = await db.supabase
+          .from('users')
+          .select('platform_id')
+          .eq('id', userId)
+          .eq('platform', 'telegram')
+          .single();
+
+        // Also check linked telegram account by phone
+        let telegramId = telegramUser?.platform_id;
+        if (!telegramId && paidUser?.phone) {
+          const { data: linkedTg } = await db.supabase
+            .from('users')
+            .select('platform_id')
+            .eq('phone', paidUser.phone)
+            .eq('platform', 'telegram')
+            .single();
+          telegramId = linkedTg?.platform_id;
+        }
+
+        if (telegramId) {
           const TelegramBot = require('node-telegram-bot-api');
           const bot = new TelegramBot(process.env.TELEGRAM_TOKEN);
-          await bot.sendMessage(user.telegram_id,
+          await bot.sendMessage(telegramId,
             `🎉 *Payment Successful! Welcome to ${newPlan.toUpperCase()}!*\n\n` +
-            `✅ Account upgraded\n` +
+            `✅ Account upgraded across all platforms\n` +
             `📊 Messages/day: ${messagesPerDay === 999999 ? 'Unlimited' : messagesPerDay}\n` +
-            `🚀 All features unlocked!\n\nType anything to start!`,
+            `🚀 All features unlocked!\n\n` +
+            `_Works on Telegram, WhatsApp & Discord!_ 🌐`,
             { parse_mode: 'Markdown' }
           );
         }
@@ -128,7 +153,7 @@ router.get('/razorpay-callback', (req, res) => {
   res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#050508;color:#e8e8f0">
     ${paid
       ? `<h1 style="color:#00e5a0">🎉 Payment Successful!</h1>
-         <p style="color:#888;margin-bottom:32px">Your account has been upgraded. Go back to Telegram!</p>
+         <p style="color:#888;margin-bottom:32px">Your account has been upgraded across all platforms. Go back to Telegram!</p>
          <a href="https://t.me/GamaClawBot" style="background:#00e5a0;color:#000;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold">Open GamaClaw →</a>`
       : `<h1 style="color:#ff4d6d">Payment Incomplete</h1>
          <p style="color:#888;margin-bottom:32px">Please try again from the bot.</p>
