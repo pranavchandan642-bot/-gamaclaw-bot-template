@@ -209,7 +209,17 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       return `❌ Could not link phone number. Please try again.`;
     }
   }
-
+    // ── AUTO DETECT PHONE NUMBER ──────────────────────────────────────────────
+ const phoneMatch = text.match(/^(\+?[0-9]{10,13})$/);
+  if (phoneMatch) {
+  const phone = phoneMatch[1].startsWith('+') ? phoneMatch[1] : '+91' + phoneMatch[1];
+  try {
+    const result = await db.linkPhone(user.id, phone);
+    return `✅ *Phone number linked!*\n\n📱 ${phone}\n\nYour account is now connected across all platforms! 🎉`;
+  } catch {
+    return `❌ Could not link. Try: */link +91XXXXXXXXXX*`;
+  }
+}
   if (text === '/briefing') {
     if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) {
       return `☀️ Daily briefing is a *Pro feature*!${upgradeMessage(user.plan)}`;
