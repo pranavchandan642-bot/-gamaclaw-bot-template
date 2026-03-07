@@ -2,67 +2,100 @@ const express = require('express');
 const router = express.Router();
 const { processMessage } = require('./processor');
 
-// Twilio sends form-encoded POST requests
-router.use(express.urlencoded({ extended: false }));
+const VERIFY_TOKEN = 'gamaclaw123';
+const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
+const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_ID;
 
-router.post('/', async (req, res) => {
-  const from = req.body.From || ''; // e.g. "whatsapp:+919876543210"
-  const body = req.body.Body || '';
-  const profileName = req.body.ProfileName || '';
-  const platformId = from.replace('whatsapp:', '');
-  const numMedia = parseInt(req.body.NumMedia || '0');
+// ── WEBHOOK VERIFICATION (Meta calls this to verify your endpoint) ─────────────
+router.get('/', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
 
-  try {
-    let response;
-
-    // Voice/audio message
-    if (numMedia > 0 && req.body.MediaContentType0?.includes('audio')) {
-      const mediaUrl = req.body.MediaUrl0;
-      const authHeader = 'Basic ' + Buffer.from(
-        `${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`
-      ).toString('base64');
-
-      const fetch = require('node-fetch');
-      const audioRes = await fetch(mediaUrl, { headers: { Authorization: authHeader } });
-      const audioBuffer = await audioRes.buffer();
-      const audioBase64 = audioBuffer.toString('base64');
-
-      response = await processMessage(platformId, 'whatsapp', null, profileName, audioBase64);
-    } else {
-      response = await processMessage(platformId, 'whatsapp', body, profileName);
-    }
-
-    // Twilio expects TwiML XML response
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Message>
-    <Body>${escapeXml(response)}</Body>
-  </Message>
-</Response>`;
-
-    res.set('Content-Type', 'text/xml');
-    res.send(twiml);
-
-  } catch (err) {
-    console.error('WhatsApp error:', err);
-    const errTwiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Message><Body>⚠️ Something went wrong. Please try again!</Body></Message>
-</Response>`;
-    res.set('Content-Type', 'text/xml');
-    res.send(errTwiml);
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    console.log('✅ WhatsApp webhook verified');
+    res.status(200).send(challenge);
+  } else {
+    res.status(403).send('Forbidden');
   }
 });
 
-function escapeXml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;')
-    .replace(/\*/g, '') // Remove markdown bold for WhatsApp plain text
-    .replace(/_/g, '');
+// ── INCOMING MESSAGES ─────────────────────────────────────────────────────────
+router.post('/', express.json(), async (req, res) => {
+  try {
+    const entry = req.body?.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const value = changes?.value;
+    const messages = value?.messages;
+
+    if (!messages || messages.length === 0) return res.sendStatus(200);
+
+    const msg = messages[0];
+    const from = msg.from; // WhatsApp number e.g. "919876543210"
+    const profileName = value?.contacts?.[0]?.profile?.name || '';
+
+    let text = null;
+    let audioBase64 = null;
+
+    if (msg.type === 'text') {
+      text = msg.text?.body || '';
+    } else if (msg.type === 'audio') {
+      // Download audio from Meta
+      try {
+        const mediaId = msg.audio?.id;
+        const fetch = require('node-fetch');
+        const mediaRes = await fetch(
+          `https://graph.facebook.com/v22.0/${mediaId}`,
+          { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } }
+        );
+        const mediaData = await mediaRes.json();
+        const audioRes = await fetch(mediaData.url, {
+          headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
+        });
+        const audioBuffer = await audioRes.buffer();
+        audioBase64 = audioBuffer.toString('base64');
+      } catch (e) {
+        console.error('Audio download error:', e.message);
+        text = '[Voice message - could not process]';
+      }
+    } else {
+      return res.sendStatus(200); // Ignore other message types
+    }
+
+    const response = await processMessage(from, 'whatsapp', text, profileName, audioBase64);
+    await sendWhatsAppMessage(from, response);
+
+    res.sendStatus(200);
+  } catch (err) {
+    console.error('WhatsApp webhook error:', err);
+    res.sendStatus(200);
+  }
+});
+
+// ── SEND MESSAGE ──────────────────────────────────────────────────────────────
+async function sendWhatsAppMessage(to, text) {
+  const fetch = require('node-fetch');
+  const url = `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`;
+
+  // Clean markdown for WhatsApp
+  const cleaned = String(text)
+    .replace(/\*\*(.*?)\*\*/g, '*$1*') // bold
+    .replace(/#{1,3} /g, '')           // headers
+    .replace(/`/g, '');                // code ticks
+
+  await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to,
+      type: 'text',
+      text: { body: cleaned },
+    }),
+  });
 }
 
 module.exports = router;
