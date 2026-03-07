@@ -1,91 +1,142 @@
 const express = require('express');
 const router = express.Router();
+const Razorpay = require('razorpay');
 const crypto = require('crypto');
-const db = require('../services/db');
 
-// ── RAZORPAY WEBHOOK ──────────────────────────────────────────────────────────
-router.post('/razorpay', express.json(), async (req, res) => {
+// ── Razorpay instance ─────────────────────────────────────────────────────────
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
+
+// ── Plan definitions ──────────────────────────────────────────────────────────
+const PLANS = {
+  pro_india: {
+    name: 'Pro Plan',
+    amount: 49900,
+    currency: 'INR',
+    description: '500 messages/day + all features',
+    messages_per_day: 500,
+  },
+  business_india: {
+    name: 'Business Plan',
+    amount: 299900,
+    currency: 'INR',
+    description: 'Unlimited messages + team features',
+    messages_per_day: 999999,
+  },
+};
+
+// ── Create a Razorpay payment link ────────────────────────────────────────────
+async function createPaymentLink(userId, planId, userEmail = '', userName = '') {
+  const plan = PLANS[planId];
+  if (!plan) return null;
   try {
-    // Verify signature
-    const signature = req.headers['x-razorpay-signature'];
-    const body = JSON.stringify(req.body);
-    const expected = crypto
-      .createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET || '')
-      .update(body)
-      .digest('hex');
+    const paymentLink = await razorpay.paymentLink.create({
+      amount: plan.amount,
+      currency: plan.currency,
+      accept_partial: false,
+      description: `GamaClaw ${plan.name} — ${plan.description}`,
+      customer: { name: userName || 'GamaClaw User', email: userEmail || '' },
+      notify: { sms: false, email: !!userEmail },
+      reminder_enable: false,
+      notes: { user_id: userId.toString(), plan_id: planId },
+      callback_url: `${process.env.RENDER_URL || 'https://gamaclaw-bot.onrender.com'}/webhook/razorpay-callback`,
+      callback_method: 'get',
+    });
+    return paymentLink.short_url;
+  } catch (err) {
+    console.error('Razorpay payment link error:', err.message);
+    return null;
+  }
+}
 
-    if (signature !== expected) {
+// ── Verify Razorpay webhook signature ─────────────────────────────────────────
+function verifyWebhook(body, signature) {
+  try {
+    const expectedSig = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(JSON.stringify(body))
+      .digest('hex');
+    return expectedSig === signature;
+  } catch { return false; }
+}
+
+// ── WEBHOOK: Called by Razorpay when payment completes ────────────────────────
+router.post('/razorpay', express.json({ type: '*/*' }), async (req, res) => {
+  try {
+    const signature = req.headers['x-razorpay-signature'];
+    if (!verifyWebhook(req.body, signature)) {
+      console.error('Invalid Razorpay signature');
       return res.status(400).json({ error: 'Invalid signature' });
     }
 
     const event = req.body.event;
-    const payment = req.body.payload?.payment?.entity;
+    console.log('Razorpay webhook:', event);
 
-    if (event === 'payment.captured' && payment) {
-      const notes = payment.notes || {};
-      const platformId = notes.platform_id;
-      const platform = notes.platform || 'telegram';
-      const plan = notes.plan || 'pro';
+    if (event === 'payment_link.paid') {
+      const paymentData = req.body.payload.payment_link.entity;
+      const notes = paymentData.notes || {};
+      const userId = notes.user_id;
+      const planId = notes.plan_id;
 
-      if (platformId) {
-        const expiry = new Date();
-        expiry.setMonth(expiry.getMonth() + 1);
+      if (!userId || !planId) return res.status(200).json({ ok: true });
 
-        await db.updateUser(platformId, platform, {
-          plan,
-          plan_expiry: expiry.toISOString(),
-          razorpay_payment_id: payment.id,
-        });
+      const newPlan = planId.includes('business') ? 'business' : 'pro';
+      const messagesPerDay = planId.includes('business') ? 999999 : 500;
 
-        console.log(`✅ Upgraded ${platformId} to ${plan} via Razorpay`);
-      }
+      // Upgrade user in Supabase
+      const { createClient } = require('@supabase/supabase-js');
+      const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+      await supabase.from('users').update({
+        plan: newPlan,
+        messages_per_day: messagesPerDay,
+        plan_started_at: new Date().toISOString(),
+        razorpay_payment_id: paymentData.id,
+      }).eq('id', userId);
+
+      console.log(`✅ User ${userId} upgraded to ${newPlan}`);
+
+      // Notify user on Telegram
+      try {
+        const { supabase: db } = require('../services/db');
+        const { data: user } = await db.from('users').select('telegram_id').eq('id', userId).single();
+        if (user && user.telegram_id) {
+          const TelegramBot = require('node-telegram-bot-api');
+          const bot = new TelegramBot(process.env.TELEGRAM_TOKEN);
+          await bot.sendMessage(user.telegram_id,
+            `🎉 *Payment Successful! Welcome to ${newPlan.toUpperCase()}!*\n\n` +
+            `✅ Account upgraded\n` +
+            `📊 Messages/day: ${messagesPerDay === 999999 ? 'Unlimited' : messagesPerDay}\n` +
+            `🚀 All features unlocked!\n\nType anything to start!`,
+            { parse_mode: 'Markdown' }
+          );
+        }
+      } catch (e) { console.error('Telegram notify error:', e.message); }
     }
 
-    res.json({ status: 'ok' });
+    res.status(200).json({ ok: true });
   } catch (err) {
-    console.error('Razorpay webhook error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('Webhook error:', err);
+    res.status(200).json({ ok: true });
   }
 });
 
-// ── STRIPE WEBHOOK ────────────────────────────────────────────────────────────
-router.post('/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
-  try {
-    const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-    const sig = req.headers['stripe-signature'];
-    let event;
-
-    try {
-      event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-    } catch (err) {
-      return res.status(400).json({ error: `Webhook error: ${err.message}` });
+// ── CALLBACK: User lands here after payment ────────────────────────────────────
+router.get('/razorpay-callback', (req, res) => {
+  const paid = req.query.razorpay_payment_link_status === 'paid';
+  res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#050508;color:#e8e8f0">
+    ${paid
+      ? `<h1 style="color:#00e5a0">🎉 Payment Successful!</h1>
+         <p style="color:#888;margin-bottom:32px">Your account has been upgraded. Go back to Telegram!</p>
+         <a href="https://t.me/GamaClawBot" style="background:#00e5a0;color:#000;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold">Open GamaClaw →</a>`
+      : `<h1 style="color:#ff4d6d">Payment Incomplete</h1>
+         <p style="color:#888;margin-bottom:32px">Please try again from the bot.</p>
+         <a href="https://t.me/GamaClawBot" style="background:#00e5a0;color:#000;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold">Back to Bot →</a>`
     }
-
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object;
-      const platformId = session.metadata?.platform_id;
-      const platform = session.metadata?.platform || 'telegram';
-      const plan = session.metadata?.plan || 'pro';
-
-      if (platformId) {
-        const expiry = new Date();
-        expiry.setMonth(expiry.getMonth() + 1);
-
-        await db.updateUser(platformId, platform, {
-          plan,
-          plan_expiry: expiry.toISOString(),
-          stripe_customer_id: session.customer,
-        });
-
-        console.log(`✅ Upgraded ${platformId} to ${plan} via Stripe`);
-      }
-    }
-
-    res.json({ received: true });
-  } catch (err) {
-    console.error('Stripe webhook error:', err);
-    res.status(500).json({ error: err.message });
-  }
+  </body></html>`);
 });
 
 module.exports = router;
+module.exports.createPaymentLink = createPaymentLink;
+module.exports.PLANS = PLANS;

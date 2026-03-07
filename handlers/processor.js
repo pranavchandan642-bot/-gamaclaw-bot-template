@@ -61,18 +61,35 @@ function planInfo(user) {
 }
 
 // ── UPGRADE OPTIONS ───────────────────────────────────────────────────────────
-function upgradeOptions() {
+async function upgradeOptions(userId = null, userEmail = '', userName = '') {
+  const payment = require('./payments');
+  
+  let proLink = 'Generating...';
+  let bizLink = 'Generating...';
+  
+  // Generate personal payment links if userId provided
+  if (userId) {
+    try {
+      const [pl, bl] = await Promise.all([
+        payment.createPaymentLink(userId, 'pro_india', userEmail, userName),
+        payment.createPaymentLink(userId, 'business_india', userEmail, userName),
+      ]);
+      proLink = pl || 'https://gamaclaw.vercel.app/#pricing';
+      bizLink = bl || 'https://gamaclaw.vercel.app/#pricing';
+    } catch {
+      proLink = 'https://gamaclaw.vercel.app/#pricing';
+      bizLink = 'https://gamaclaw.vercel.app/#pricing';
+    }
+  }
+
   return `⭐ *GamaClaw Plans*\n\n` +
-    `🆓 *Free* — ₹0/month\n• 30 messages/day\n• Email drafting, Chat, Summarize\n\n` +
-    `🚀 *Pro* — ₹499/month\n• 500 messages/day\n• Everything in Free +\n• Calendar management\n• Expense tracker\n• Voice notes\n• Daily briefing\n• Price alerts\n• Persistent memory\n\n` +
-    `🏢 *Business* — ₹2,999/month\n• Unlimited messages\n• Everything in Pro +\n• Lead management\n• Follow-up automation\n• Team features\n• Priority support\n\n` +
-    `💳 *Pay via UPI/Card:*\n` +
-    `• Pro: ${process.env.RAZORPAY_PRO_LINK || 'https://rzp.io/l/gamaclaw-pro'}\n` +
-    `• Business: ${process.env.RAZORPAY_BIZ_LINK || 'https://rzp.io/l/gamaclaw-biz'}\n\n` +
-    `🌍 *International (USD):*\n` +
-    `• Pro ($6): ${process.env.STRIPE_PRO_LINK || 'https://buy.stripe.com/gamaclaw-pro'}\n` +
-    `• Business ($35): ${process.env.STRIPE_BIZ_LINK || 'https://buy.stripe.com/gamaclaw-biz'}\n\n` +
-    `_After payment, send your transaction ID and we'll upgrade you within minutes!_`;
+    `🆓 *Free* — ₹0/month\n• 30 messages/day\n• Email draft & send\n• All calculators (EMI, GST, SIP)\n• Weather, News, Translate\n\n` +
+    `🚀 *Pro* — ₹499/month\n• 500 messages/day\n• Everything in Free +\n• Expense tracker\n• Invoice generator\n• Lead CRM\n• Flight & train search\n• Voice notes\n• Price alerts\n• Priority support\n\n` +
+    `🏢 *Business* — ₹2,999/month\n• Unlimited messages\n• Everything in Pro +\n• Team features\n• Follow-up automation\n• SLA support\n\n` +
+    `💳 *Pay instantly via UPI/Card:*\n` +
+    `🚀 Pro (₹499): ${proLink}\n` +
+    `🏢 Business (₹2,999): ${bizLink}\n\n` +
+    `_Payment auto-upgrades your account instantly!_ ✅`;
 }
 
 // ── HELP MESSAGE ──────────────────────────────────────────────────────────────
@@ -148,7 +165,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   }
   if (text === '/help') return helpMessage(user.plan);
   if (text === '/plan') return planInfo(user);
-  if (text === '/upgrade') return upgradeOptions();
+  if (text === '/upgrade') return await upgradeOptions(user.id, user.email || '', user.name || '');
   if (text === '/briefing') {
     if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) {
       return `☀️ Daily briefing is a *Pro feature*!${upgradeMessage(user.plan)}`;
@@ -364,7 +381,7 @@ Reply *send* ✅ or *cancel* ❌`;
     }
 
     case 'UPGRADE_PLAN':
-      return upgradeOptions();
+      return await upgradeOptions(user.id, user.email || '', user.name || '');
 
     case 'VIEW_PLAN':
       return planInfo(user);
@@ -468,10 +485,30 @@ Reply *send* ✅ or *cancel* ❌`;
       // First check if it's a task we can partially handle with existing tools
       const lowerText = text.toLowerCase();
       
-      // Detect if user is asking for calculation even if EMI_CALC intent missed
-      if ((lowerText.includes('calculate') || lowerText.includes('calc') || lowerText.includes('how much')) &&
-          (lowerText.includes('%') || lowerText.includes('percent') || lowerText.includes('interest') || 
-           lowerText.includes('emi') || lowerText.includes('loan'))) {
+      // GST calculation
+      if (lowerText.includes('gst') || lowerText.includes('tax') && lowerText.includes('%')) {
+        const result = await ai.calculateGST(text).catch(() => null);
+        if (result) {
+          await db.saveMessage(user.id || platformId, 'user', text);
+          await db.saveMessage(user.id || platformId, 'assistant', result);
+          return result;
+        }
+      }
+
+      // SIP calculation
+      if (lowerText.includes('sip') || (lowerText.includes('invest') && lowerText.includes('month') && lowerText.includes('year'))) {
+        const result = await ai.calculateSIP(text).catch(() => null);
+        if (result) {
+          await db.saveMessage(user.id || platformId, 'user', text);
+          await db.saveMessage(user.id || platformId, 'assistant', result);
+          return result;
+        }
+      }
+
+      // Detect if user is asking for EMI calculation
+      if ((lowerText.includes('emi') || lowerText.includes('loan') || lowerText.includes('home loan') ||
+           lowerText.includes('car loan') || lowerText.includes('personal loan')) &&
+          (lowerText.includes('%') || lowerText.includes('percent') || lowerText.includes('interest') || lowerText.includes('lakh'))) {
         const result = await ai.calculateEMI(text).catch(() => null);
         if (result && !result.includes('❌')) {
           await db.saveMessage(user.id || platformId, 'user', text);

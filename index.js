@@ -12,9 +12,9 @@ app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime
 const whatsappRouter = require('./handlers/whatsapp');
 app.use('/webhook/whatsapp', whatsappRouter);
 
-// ── Razorpay & Stripe Webhooks ────────────────────────────────────────────────
-const paymentRouter = require('./handlers/payments');
-app.use('/webhook/payments', paymentRouter);
+// ── Razorpay Webhook ──────────────────────────────────────────────────────────
+const paymentsRouter = require('./handlers/payments');
+app.use('/webhook', paymentsRouter);
 
 // ── Start server ──────────────────────────────────────────────────────────────
 app.listen(PORT, () => {

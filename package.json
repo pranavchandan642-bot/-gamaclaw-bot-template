@@ -1,7 +1,7 @@
 {
   "name": "gamaclaw",
   "version": "4.0.0",
-  "description": "GamaClaw \u2014 24/7 AI Personal Assistant (Telegram + WhatsApp + Discord)",
+  "description": "GamaClaw — 24/7 AI Personal Assistant (Telegram + WhatsApp + Discord)",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -13,13 +13,14 @@
     "discord.js": "^14.15.0",
     "express": "^4.18.0",
     "googleapis": "^144.0.0",
+    "groq-sdk": "^0.9.0",
     "node-cron": "^3.0.3",
     "node-fetch": "^2.7.0",
     "node-telegram-bot-api": "^0.64.0",
     "nodemailer": "^6.9.9",
+    "razorpay": "^2.9.6",
     "stripe": "^16.0.0",
-    "twilio": "^5.3.0",
-    "groq-sdk": "^0.9.0"
+    "twilio": "^5.3.0"
   },
   "engines": {
     "node": ">=18.0.0"
