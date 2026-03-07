@@ -20,5 +20,5 @@ app.use('/webhook', paymentsRouter);
 app.listen(PORT, () => {
   console.log(`✅ GamaClaw server running on port ${PORT}`);
   require('./handlers/telegram');                // Telegram polling
-  require('./handlers/discord');  // Discord bot
+  require('./handlers/discord').startDiscord();  // Discord bot
 });
