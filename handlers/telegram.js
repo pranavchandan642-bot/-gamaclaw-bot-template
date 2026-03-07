@@ -1,10 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const { processMessage } = require('./processor');
+const db = require('../services/db');
 const axios = require('axios');
-
-// Use webhook mode to avoid 409 conflicts
-const express = require('express');
-const app = require('../index').app;
 
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { webHook: false });
 
@@ -27,7 +24,6 @@ async function startBot() {
   }
 }
 
-// Delay initial start to let old instance fully shut down
 setTimeout(startBot, 5000);
 
 bot.on('message', async (msg) => {
@@ -38,9 +34,29 @@ bot.on('message', async (msg) => {
   try {
     await bot.sendChatAction(chatId, 'typing');
 
+    // ── PHONE NUMBER SHARED ─────────────────────────────────────────────────
+    if (msg.contact && msg.contact.phone_number) {
+      const phone = msg.contact.phone_number.startsWith('+')
+        ? msg.contact.phone_number
+        : '+' + msg.contact.phone_number;
+
+      const user = await db.getOrCreateUser(platformId, 'telegram', userName);
+      const result = await db.linkPhone(user.id, phone);
+
+      const replyText = result.linked && result.plan
+        ? `✅ *Phone linked & plan synced!*\n\n📱 ${phone}\n🚀 Plan: *${result.plan.toUpperCase()}*\n\nYour account is now connected across all platforms!`
+        : `✅ *Phone number linked!*\n\n📱 ${phone}\n\nYour GamaClaw account is now connected across Telegram, WhatsApp & Discord! 🎉`;
+
+      await bot.sendMessage(chatId, replyText, {
+        parse_mode: 'Markdown',
+        reply_markup: { remove_keyboard: true },
+      });
+      return;
+    }
+
     let response;
 
-    // Voice message
+    // ── VOICE MESSAGE ───────────────────────────────────────────────────────
     if (msg.voice) {
       const fileId = msg.voice.file_id;
       const fileInfo = await bot.getFile(fileId);
@@ -54,23 +70,45 @@ bot.on('message', async (msg) => {
       response = await processMessage(platformId, 'telegram', text, userName);
     }
 
-    // Try sending with Markdown first, fallback to plain text if it fails
+    // ── SEND RESPONSE ───────────────────────────────────────────────────────
     try {
       await bot.sendMessage(chatId, response, {
         parse_mode: 'Markdown',
         disable_web_page_preview: true,
       });
     } catch (markdownErr) {
-      // Markdown failed — send as plain text
       console.error('Markdown error, retrying as plain text:', markdownErr.message);
       await bot.sendMessage(chatId, response.replace(/[*_`]/g, ''), {
         disable_web_page_preview: true,
       });
     }
 
+    // ── ASK FOR PHONE ON /start ─────────────────────────────────────────────
+    if (msg.text?.trim() === '/start') {
+      // Check if phone already linked
+      const user = await db.getOrCreateUser(platformId, 'telegram', userName);
+      if (!user.phone) {
+        setTimeout(async () => {
+          await bot.sendMessage(chatId,
+            `📱 *One more thing!*\n\nShare your phone number to link your account across WhatsApp & Discord — so your plan works everywhere!`,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                keyboard: [[{
+                  text: '📱 Share My Phone Number',
+                  request_contact: true,
+                }]],
+                resize_keyboard: true,
+                one_time_keyboard: true,
+              },
+            }
+          );
+        }, 1500);
+      }
+    }
+
   } catch (err) {
-    console.error('Telegram error FULL:', err.message, err.stack);
-    // Send the actual error in dev mode so we can debug
+    console.error('Telegram error:', err.message, err.stack);
     const isDev = process.env.NODE_ENV !== 'production';
     await bot.sendMessage(chatId, isDev
       ? '⚠️ Error: ' + err.message
@@ -80,7 +118,7 @@ bot.on('message', async (msg) => {
 });
 
 bot.on('polling_error', (err) => {
-  if (err.message.includes('409')) return; // harmless conflict during deploy
+  if (err.message.includes('409')) return;
   console.error('Polling error:', err.message);
 });
 
