@@ -1,6 +1,6 @@
-const { Client, GatewayIntentBits, Events, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Events, Partials } = require('discord.js');
 const { processMessage } = require('./processor');
-const axios = require('axios');
+const axios = require('axios'); 
 
 const client = new Client({
   intents: [
@@ -8,9 +8,11 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.DirectMessageReactions,
+    GatewayIntentBits.DirectMessageTyping,
   ],
-});
-
+  partials: [Partials.Channel, Partials.Message],
+ });
 client.once(Events.ClientReady, (c) => {
   console.log(`✅ Discord bot ready as ${c.user.tag}`);
 });
