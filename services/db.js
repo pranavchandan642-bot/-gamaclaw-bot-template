@@ -335,6 +335,104 @@ async function getReminders(userId) {
   return data || [];
 }
 
+// ── ACCOUNT LINKING ───────────────────────────────────────────────────────────
+
+// Generate a 6-digit linking code for a user (called from dashboard API)
+async function generateLinkingCode(authUserId, authEmail) {
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiry = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 min expiry
+
+  // Check if auth user already has a linked bot account
+  const { data: existing } = await supabase
+    .from('users')
+    .select('id')
+    .eq('auth_user_id', authUserId)
+    .single();
+
+  if (existing) {
+    // Already linked — just update code
+    await supabase.from('users').update({ linking_code: code, linking_code_expiry: expiry })
+      .eq('auth_user_id', authUserId);
+  } else {
+    // Store code temporarily — will be claimed when user sends it in bot
+    await supabase.from('users').update({ linking_code: code, linking_code_expiry: expiry })
+      .eq('email', authEmail);
+
+    // If no user with this email, create a placeholder
+    const { data: emailUser } = await supabase.from('users').select('id').eq('email', authEmail).single();
+    if (!emailUser) {
+      // Store in a temp table or just return code — bot will link on claim
+      await supabase.from('users').insert({
+        platform_id: authUserId,
+        platform: 'web',
+        email: authEmail,
+        auth_user_id: authUserId,
+        linking_code: code,
+        linking_code_expiry: expiry,
+        plan: 'free',
+        messages_today: 0,
+        messages_reset_date: new Date().toISOString().split('T')[0],
+        created_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  return code;
+}
+
+// Called when user sends linking code in bot
+async function claimLinkingCode(platformId, platform, code) {
+  // Find user with this code that hasn't expired
+  const { data: webUser } = await supabase
+    .from('users')
+    .select('*')
+    .eq('linking_code', code)
+    .eq('platform', 'web')
+    .single();
+
+  if (!webUser) return { success: false, reason: 'invalid' };
+
+  const expired = new Date(webUser.linking_code_expiry) < new Date();
+  if (expired) return { success: false, reason: 'expired' };
+
+  // Find bot user
+  const { data: botUser } = await supabase
+    .from('users')
+    .select('*')
+    .eq('platform_id', platformId)
+    .eq('platform', platform)
+    .single();
+
+  if (!botUser) return { success: false, reason: 'no_bot_user' };
+
+  // Link bot user to auth user — sync plan
+  await supabase.from('users').update({
+    auth_user_id: webUser.auth_user_id,
+    email: webUser.email,
+    linking_code: null,
+    linking_code_expiry: null,
+  }).eq('id', botUser.id);
+
+  // Update web user with bot info
+  await supabase.from('users').update({
+    linking_code: null,
+    linking_code_expiry: null,
+  }).eq('id', webUser.id);
+
+  return { success: true, plan: botUser.plan };
+}
+
+// Get bot user by auth_user_id (for dashboard)
+async function getBotUserByAuthId(authUserId) {
+  const { data } = await supabase
+    .from('users')
+    .select('*')
+    .eq('auth_user_id', authUserId)
+    .neq('platform', 'web')
+    .single();
+  return data;
+}
+
 module.exports = {
   supabase,
   getOrCreateUser,
@@ -346,6 +444,9 @@ module.exports = {
   canAccessPlatform,
   isEarlyAdopterSlotAvailable,
   getEarlyAdopterCount,
+  generateLinkingCode,
+  claimLinkingCode,
+  getBotUserByAuthId,
   saveMemory,
   getMemory,
   deleteMemory,

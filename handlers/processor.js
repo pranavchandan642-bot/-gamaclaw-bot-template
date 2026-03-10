@@ -220,6 +220,25 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     return `❌ Could not link. Try: */link +91XXXXXXXXXX*`;
   }
 }
+ // ── CONNECT COMMAND (link dashboard account) ──────────────────────────────
+   if (text.startsWith('/connect')) {
+     const code = text.replace('/connect', '').trim();
+     if (!code || code.length !== 6) {
+       return `🔗 *Link your dashboard account!*\n\nUsage: */connect 123456*\n\nGet your code from *gamaclaw.vercel.app/dashboard*`;
+     } 
+     try {
+       const result = await db.claimLinkingCode(platformId, platform, code);
+       if (result.success) {
+        return `✅ *Account linked successfully!*\n\n🌐 Your dashboard is now connected!\nVisit: gamaclaw.vercel.app/dashboard`;
+       } else if (result.reason === 'expired') {
+        return `⏱ Code expired! Generate a new one at *gamaclaw.vercel.app/dashboard*`;
+      } else {
+        return `❌ Invalid code. Get a new one at *gamaclaw.vercel.app/dashboard*`;
+      }
+    } catch {
+      return `❌ Could not link. Please try again.`;
+     }
+   }
   if (text === '/briefing') {
     if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) {
       return `☀️ Daily briefing is a *Pro feature*!${upgradeMessage(user.plan)}`;
