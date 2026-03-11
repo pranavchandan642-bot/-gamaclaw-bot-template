@@ -1,8 +1,18 @@
 const Groq = require('groq-sdk');
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// Core Groq call function
-async function ask(prompt, maxTokens = 1000) {
+// ── MULTI-MODEL AI CALL ───────────────────────────────────────────────────────
+
+async function askWithModel(prompt, model = 'groq', maxTokens = 1000) {
+  switch (model) {
+    case 'claude': return await askClaude(prompt, maxTokens);
+    case 'gpt':    return await askGPT(prompt, maxTokens);
+    case 'gemini': return await askGemini(prompt, maxTokens);
+    default:       return await askGroq(prompt, maxTokens);
+  }
+}
+
+async function askGroq(prompt, maxTokens = 1000) {
   const completion = await groq.chat.completions.create({
     messages: [{ role: 'user', content: prompt }],
     model: 'llama-3.3-70b-versatile',
@@ -12,9 +22,71 @@ async function ask(prompt, maxTokens = 1000) {
   return completion.choices[0]?.message?.content?.trim() || '';
 }
 
-// JSON helper
+async function askClaude(prompt, maxTokens = 1000) {
+  const fetch = require('node-fetch');
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-opus-4-5',
+      max_tokens: maxTokens,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || 'Claude API error');
+  return data.content?.[0]?.text?.trim() || '';
+}
+
+async function askGPT(prompt, maxTokens = 1000) {
+  const fetch = require('node-fetch');
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      max_tokens: maxTokens,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || 'GPT API error');
+  return data.choices?.[0]?.message?.content?.trim() || '';
+}
+
+async function askGemini(prompt, maxTokens = 1000) {
+  const fetch = require('node-fetch');
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: maxTokens },
+      }),
+    }
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || 'Gemini API error');
+  return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+}
+
+// Default ask (Groq) — used internally for intent detection, JSON extraction etc
+async function ask(prompt, maxTokens = 1000) {
+  return await askGroq(prompt, maxTokens);
+}
+
+// JSON helper — always uses Groq (fast + free for structured tasks)
 async function askJSON(prompt) {
-  const raw = await ask(prompt + '\n\nIMPORTANT: Return ONLY valid JSON, no markdown, no backticks, no explanation.');
+  const raw = await askGroq(prompt + '\n\nIMPORTANT: Return ONLY valid JSON, no markdown, no backticks, no explanation.');
   try { return JSON.parse(raw.replace(/```json|```/g, '').trim()); }
   catch { return null; }
 }
@@ -91,14 +163,15 @@ async function draftFollowUp(leadInfo, context = '') {
 async function generateBriefing(userName, events, expenses, memoryContext) {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-  const eventList = events.length ? events.slice(0,3).map(e => `• ${e.summary} at ${new Date(e.start.dateTime||e.start.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}`).join('\n') : '• No meetings today 🎉';
+  const eventList = events.length
+    ? events.slice(0,3).map(e => `• ${e.summary} at ${new Date(e.start.dateTime||e.start.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}`).join('\n')
+    : '• No meetings today 🎉';
   const totalToday = expenses.filter(e=>e.date?.startsWith(new Date().toISOString().split('T')[0])).reduce((s,e)=>s+Number(e.amount),0);
   return `☀️ *${greeting}, ${userName||'Boss'}!*\n\n📅 *Today's Meetings:*\n${eventList}\n\n💰 *Spent Today:* ₹${totalToday.toLocaleString('en-IN')}\n\n_GamaClaw 🦀_`;
 }
 
 // ── VOICE ─────────────────────────────────────────────────────────────────────
 async function transcribeAndDetect(audioBase64, mimeType = 'audio/ogg') {
-  // Groq supports Whisper for transcription
   try {
     const { toFile } = require('groq-sdk');
     const audioBuffer = Buffer.from(audioBase64, 'base64');
@@ -114,11 +187,19 @@ async function transcribeAndDetect(audioBase64, mimeType = 'audio/ogg') {
   }
 }
 
-// ── CHAT ──────────────────────────────────────────────────────────────────────
-async function chat(message, history = [], memoryContext = '') {
+// ── CHAT (multi-model) ────────────────────────────────────────────────────────
+async function chat(message, history = [], memoryContext = '', aiModel = 'groq') {
   const historyText = history.slice(-10).map(h=>`${h.role}: ${h.content}`).join('\n');
-  
+
+  const modelNames = {
+    groq: 'Groq Llama 3.3',
+    claude: 'Claude Opus 4.5',
+    gpt: 'GPT-4o',
+    gemini: 'Gemini 2.0 Flash',
+  };
+
   const systemPrompt = `You are GamaClaw 🦀 — a 24/7 ultra-smart AI personal assistant on Telegram/WhatsApp/Discord.
+You are powered by ${modelNames[aiModel] || 'Groq Llama 3.3'}.
 
 YOUR PERSONALITY:
 - Warm, friendly, professional — like a brilliant friend who is also an expert
@@ -132,48 +213,67 @@ YOUR CAPABILITIES — you can help with ANYTHING:
 - Write anything (emails, messages, posts, essays, stories, code, contracts)
 - Calculate anything (EMI, tax, percentages, conversions, splits)
 - Research any topic and give structured summaries
-- Give advice (career, business, relationships, health — always recommend professionals for serious matters)
-- Help with Indian context (GST, IRCTC, UPI, Aadhaar, cricket, Bollywood, Indian laws)
-- Speak multiple languages (Hindi, Hinglish, Marathi, Tamil, etc.) if user writes in that language
-
-SMART TASK EXECUTION:
-- If user asks you to DO something (write an email, calculate, translate, research) — DO IT completely, don't just describe how
-- If a task needs clarification, ask ONE specific question, not multiple
-- If you're not sure what user wants, make your best attempt AND ask if that's what they meant
-- Remember context from conversation history — "that client" refers to whoever was discussed earlier
-
-INDIAN CONTEXT AWARENESS:
-- Default currency is ₹ (INR) unless specified
-- Know Indian cities, states, festivals, cricket players, Bollywood
-- Understand Hinglish (mix of Hindi and English)
-- Know Indian financial context: FD, RD, PPF, NPS, mutual funds, SIP
-- Cricket: IPL teams, Test records, current players
+- Give advice (career, business, relationships, health)
+- Help with Indian context (GST, IRCTC, UPI, cricket, Bollywood, Indian laws)
+- Speak multiple languages (Hindi, Hinglish, Marathi, Tamil, etc.)
 
 RESPONSE FORMAT RULES:
 - For factual answers: direct answer first, then context
 - For calculations: show the result prominently, then breakdown
 - For writing tasks: deliver the content directly
-- For advice: be specific and actionable
 - Keep responses under 300 words unless task requires more
-- Never say "I cannot" or "I don't have access" — find a way to help
 
 ${memoryContext}
 
 CONVERSATION HISTORY:
 ${historyText}`;
 
-  return await ask(`${systemPrompt}
+  try {
+    return await askWithModel(`${systemPrompt}\n\nUser: ${message}\nGamaClaw:`, aiModel, 1200);
+  } catch (err) {
+    console.error(`${aiModel} chat error:`, err.message);
+    // Fallback to Groq if selected model fails
+    if (aiModel !== 'groq') {
+      return await askGroq(`${systemPrompt}\n\nUser: ${message}\nGamaClaw:`, 1200);
+    }
+    throw err;
+  }
+}
 
-User: ${message}
-GamaClaw:`, 1200);
+// ── GST CALCULATOR ────────────────────────────────────────────────────────────
+async function calculateGST(message) {
+  const d = await askJSON(`Extract GST calculation from: "${message}"\nReturn JSON: {"amount":number,"gst_rate":number,"type":"inclusive or exclusive"}`);
+  if (!d) return null;
+  let base, gst, total;
+  if (d.type === 'inclusive') {
+    base = d.amount / (1 + d.gst_rate / 100);
+    gst = d.amount - base;
+    total = d.amount;
+  } else {
+    base = d.amount;
+    gst = d.amount * d.gst_rate / 100;
+    total = d.amount + gst;
+  }
+  const cgst = gst / 2;
+  return `🧾 *GST Calculator*\n\n━━━━━━━━━━━━━━━━━\n💰 Base Amount: *₹${Math.round(base).toLocaleString('en-IN')}*\n📊 GST Rate: *${d.gst_rate}%*\n━━━━━━━━━━━━━━━━━\n🔹 CGST (${d.gst_rate/2}%): ₹${Math.round(cgst).toLocaleString('en-IN')}\n🔹 SGST (${d.gst_rate/2}%): ₹${Math.round(cgst).toLocaleString('en-IN')}\n━━━━━━━━━━━━━━━━━\n💳 *Total: ₹${Math.round(total).toLocaleString('en-IN')}*\n💵 Total GST: ₹${Math.round(gst).toLocaleString('en-IN')}\n━━━━━━━━━━━━━━━━━`;
+}
+
+// ── SIP CALCULATOR ────────────────────────────────────────────────────────────
+async function calculateSIP(message) {
+  const d = await askJSON(`Extract SIP details from: "${message}"\nReturn JSON: {"monthly_investment":number,"annual_return":number,"years":number}`);
+  if (!d) return null;
+  const r = d.annual_return / 12 / 100;
+  const n = d.years * 12;
+  const fv = d.monthly_investment * ((Math.pow(1 + r, n) - 1) / r) * (1 + r);
+  const invested = d.monthly_investment * n;
+  const returns = fv - invested;
+  return `📈 *SIP Calculator*\n\n━━━━━━━━━━━━━━━━━\n💰 Monthly SIP: *₹${d.monthly_investment.toLocaleString('en-IN')}*\n📊 Expected Return: *${d.annual_return}% p.a.*\n📅 Duration: *${d.years} years*\n━━━━━━━━━━━━━━━━━\n💵 Total Invested: ₹${Math.round(invested).toLocaleString('en-IN')}\n📈 Estimated Returns: ₹${Math.round(returns).toLocaleString('en-IN')}\n🏆 *Future Value: ₹${Math.round(fv).toLocaleString('en-IN')}*\n━━━━━━━━━━━━━━━━━\n_Returns are estimated. Mutual funds subject to market risk._`;
 }
 
 // ── WEATHER ───────────────────────────────────────────────────────────────────
 async function getWeather(message) {
   const city = await ask(`Extract only the city name from: "${message}". Reply with ONLY the city name, nothing else.`);
   const fetch = require('node-fetch');
-
-  // Primary: Open-Meteo (free, no key, very reliable)
   try {
     const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`);
     const geoData = await geoRes.json();
@@ -182,17 +282,9 @@ async function getWeather(message) {
       const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code,apparent_temperature&timezone=auto`);
       const w = await wRes.json();
       const c = w.current;
-      const desc = getWeatherDesc(c.weather_code);
-      return `🌤️ *Weather in ${name}, ${country}*
-
-🌡️ *${c.temperature_2m}°C* (feels like ${c.apparent_temperature}°C)
-☁️ ${desc}
-💧 Humidity: ${c.relative_humidity_2m}%
-💨 Wind: ${c.wind_speed_10m} km/h`;
+      return `🌤️ *Weather in ${name}, ${country}*\n\n🌡️ *${c.temperature_2m}°C* (feels like ${c.apparent_temperature}°C)\n☁️ ${getWeatherDesc(c.weather_code)}\n💧 Humidity: ${c.relative_humidity_2m}%\n💨 Wind: ${c.wind_speed_10m} km/h`;
     }
   } catch(e) { console.log('Open-Meteo failed:', e.message); }
-
-  // Fallback: wttr.in
   try {
     const res = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=j1`);
     if (res.ok) {
@@ -200,22 +292,11 @@ async function getWeather(message) {
       const c = data.current_condition[0];
       const area = data.nearest_area[0].areaName[0].value;
       const country = data.nearest_area[0].country[0].value;
-      return `🌤️ *Weather in ${area}, ${country}*
-
-🌡️ *${c.temp_C}°C* (feels like ${c.FeelsLikeC}°C)
-☁️ ${c.weatherDesc[0].value}
-💧 Humidity: ${c.humidity}%
-💨 Wind: ${c.windspeedKmph} km/h`;
+      return `🌤️ *Weather in ${area}, ${country}*\n\n🌡️ *${c.temp_C}°C* (feels like ${c.FeelsLikeC}°C)\n☁️ ${c.weatherDesc[0].value}\n💧 Humidity: ${c.humidity}%\n💨 Wind: ${c.windspeedKmph} km/h`;
     }
   } catch(e) { console.log('wttr.in failed:', e.message); }
-
-  // Final fallback: Groq AI estimate
-  const result = await ask(`What is the typical current weather in ${city}, India right now in March? Give realistic temperature, conditions, humidity.`);
-  return `🌤️ *Weather in ${city}*
-
-${result}
-
-_⚠️ Live data unavailable — AI estimate_`;
+  const result = await ask(`What is the typical current weather in ${city} right now? Give realistic temperature, conditions, humidity.`);
+  return `🌤️ *Weather in ${city}*\n\n${result}\n\n_⚠️ Live data unavailable — AI estimate_`;
 }
 
 function getWeatherDesc(code) {
@@ -247,18 +328,15 @@ async function getNews(message) {
   } catch { return `❌ Could not fetch news.`; }
 }
 
-// ── WEB SEARCH ────────────────────────────────────────────────────────────────
 async function webSearch(message) {
   const result = await ask(`You are a research assistant. Research: "${message}"\n\nProvide:\n📋 *Summary* — 2-3 sentences\n🔍 *Key Facts* — 4-5 bullet points\n💡 *Key Takeaway*\n📌 *Sources to check* — 2-3 websites`, 1200);
   return `🔍 *Research Results*\n\n${result}`;
 }
 
-// ── REMINDER ──────────────────────────────────────────────────────────────────
 async function extractReminder(message) {
-  return await askJSON(`Extract reminder from: "${message}"\nToday: ${new Date().toISOString()}\nReturn JSON: {"text":"what to remind","time":"HH:MM","date":"YYYY-MM-DD or null for daily","recurring":"daily|weekly|monthly|once","day_of_week":"monday etc or null"}`);
+  return await askJSON(`Extract reminder from: "${message}"\nToday: ${new Date().toISOString()}\nReturn JSON: {"text":"what to remind","time":"HH:MM","date":"YYYY-MM-DD or null","recurring":"daily|weekly|monthly|once","day_of_week":"monday etc or null"}`);
 }
 
-// ── INVOICE ───────────────────────────────────────────────────────────────────
 async function extractInvoiceDetails(message) {
   return await askJSON(`Extract invoice details from: "${message}"\nReturn JSON: {"client_name":"...","client_email":"or null","items":[{"description":"...","amount":number}],"currency":"INR or USD","invoice_number":"INV-001","due_date":"YYYY-MM-DD or null"}`);
 }
@@ -277,15 +355,13 @@ async function generateInvoiceText(details) {
   return inv;
 }
 
-// ── FLIGHTS ───────────────────────────────────────────────────────────────────
 async function searchFlights(message) {
   const d = await askJSON(`Extract flight search from: "${message}"\nReturn JSON: {"from":"city","to":"city","date":"YYYY-MM-DD or relative","passengers":1}`);
   if (!d) return '❌ Try: "Find flights from Delhi to Mumbai tomorrow"';
-  const result = await ask(`List 3 realistic flight options from ${d.from} to ${d.to} on ${d.date}. Include airline, times, duration, approximate price in INR. Note these are sample prices.`);
+  const result = await ask(`List 3 realistic flight options from ${d.from} to ${d.to} on ${d.date}. Include airline, times, duration, approximate price in INR.`);
   return `✈️ *Flights: ${d.from} → ${d.to}*\n📅 ${d.date}\n\n${result}\n\n🔗 Book: MakeMyTrip · Cleartrip · IndiGo.in\n_Verify prices before booking_`;
 }
 
-// ── TRAINS ────────────────────────────────────────────────────────────────────
 async function searchTrains(message) {
   const d = await askJSON(`Extract train search from: "${message}"\nReturn JSON: {"from":"city","to":"city","date":"YYYY-MM-DD or relative","class":"sleeper/3AC/2AC or null"}`);
   if (!d) return '❌ Try: "Find trains from Mumbai to Delhi tomorrow"';
@@ -293,15 +369,13 @@ async function searchTrains(message) {
   return `🚂 *Trains: ${d.from} → ${d.to}*\n📅 ${d.date}\n\n${result}\n\n🔗 Book at: *irctc.co.in*`;
 }
 
-// ── TRANSLATE ─────────────────────────────────────────────────────────────────
 async function translateText(message) {
   const d = await askJSON(`Extract translation request from: "${message}"\nReturn JSON: {"text":"text to translate","target_language":"language name"}`);
   if (!d) return '❌ Try: "Translate Hello to Hindi"';
-  const translated = await ask(`Translate to ${d.target_language}. Return ONLY the translation, nothing else:\n\n"${d.text}"`);
+  const translated = await ask(`Translate to ${d.target_language}. Return ONLY the translation:\n\n"${d.text}"`);
   return `🌍 *Translation*\n\n*Original:* ${d.text}\n*${d.target_language}:* ${translated}`;
 }
 
-// ── UPI PARSER ────────────────────────────────────────────────────────────────
 async function parseUPIMessage(message) {
   const txn = await askJSON(`Parse this UPI/bank SMS: "${message}"\nReturn JSON: {"type":"credit or debit","amount":number,"party":"who","upi_id":"or null","balance":null,"reference":"or null"}`);
   if (!txn) return '❌ Paste the full UPI SMS text to parse it.';
@@ -316,7 +390,6 @@ async function parseUPIHistory(text) {
   return await ask(`Parse these UPI transactions and summarize:\n\n${text}\n\nList each transaction, then show:\n📈 Total Received: ₹X\n📉 Total Sent: ₹X\n💰 Net: ₹X\nTop merchants`, 1500);
 }
 
-// ── SPORTS ────────────────────────────────────────────────────────────────────
 async function getSportsScore(message) {
   const d = await askJSON(`Extract sport query from: "${message}"\nReturn JSON: {"sport":"cricket|football|etc","query":"match or team"}`);
   const query = d ? `${d.sport}: ${d.query}` : message;
@@ -337,11 +410,10 @@ async function getSportsScore(message) {
       }
     }
   } catch {}
-  const result = await ask(`Latest score/result for ${query}. Be specific. Suggest official sources if unknown.`);
+  const result = await ask(`Latest score/result for ${query}. Be specific.`);
   return `🏆 *${query}*\n\n${result}\n\n🔗 *cricbuzz.com* · *espncricinfo.com*`;
 }
 
-// ── SOCIAL POST ───────────────────────────────────────────────────────────────
 async function writeSocialPost(message) {
   const d = await askJSON(`Extract social post request from: "${message}"\nReturn JSON: {"platform":"twitter|linkedin|instagram|facebook","topic":"what to post","tone":"professional|casual|funny|inspirational"}`);
   const platform = d?.platform || 'twitter';
@@ -353,7 +425,6 @@ async function writeSocialPost(message) {
   return `${emojis[platform]||'📱'} *${platform.charAt(0).toUpperCase()+platform.slice(1)} Post*\n\n${post}\n\n_${post.length} characters · Ready to post!_`;
 }
 
-// ── EMI CALCULATOR ────────────────────────────────────────────────────────────
 async function calculateEMI(message) {
   const d = await askJSON(`Extract loan details from: "${message}"\nReturn JSON: {"principal":number,"rate":annual_percent,"tenure_months":number,"currency":"INR or USD"}`);
   if (!d) return '❌ Try: "EMI for ₹50 lakh at 8.5% for 20 years"';
@@ -365,18 +436,15 @@ async function calculateEMI(message) {
   return `🧮 *EMI Calculator*\n\n━━━━━━━━━━━━━━━━━\n💰 Loan: *${sym}${d.principal.toLocaleString('en-IN')}*\n📊 Rate: *${d.rate}% p.a.*\n📅 Tenure: *${d.tenure_months} months*\n━━━━━━━━━━━━━━━━━\n💳 *Monthly EMI: ${sym}${Math.round(emi).toLocaleString('en-IN')}*\n💵 Total Payment: ${sym}${Math.round(total).toLocaleString('en-IN')}\n📈 Total Interest: ${sym}${Math.round(interest).toLocaleString('en-IN')}\n━━━━━━━━━━━━━━━━━`;
 }
 
-// ── RESUME REVIEW ─────────────────────────────────────────────────────────────
 async function reviewResume(text) {
   return await ask(`You are a professional HR consultant. Review this resume:\n\n${text}\n\nFormat:\n✅ *Strengths*\n• ...\n\n⚠️ *Weaknesses*\n• ...\n\n💡 *Improvements*\n• ...\n\n🎯 *ATS Score*: X/10\n\n📝 *Suggested Summary*:\n...`, 1500);
 }
 
-// ── CONTRACT WRITER ───────────────────────────────────────────────────────────
 async function writeContract(message) {
-  const result = await ask(`Write a professional freelance contract based on: "${message}"\nInclude: scope, payment terms, IP ownership, confidentiality, termination, governing law (India).\nUse clear sections.`, 2000);
+  const result = await ask(`Write a professional freelance contract based on: "${message}"\nInclude: scope, payment terms, IP ownership, confidentiality, termination, governing law (India).`, 2000);
   return `🤝 *CONTRACT DRAFT*\n\n${result}\n\n_⚠️ Consult a lawyer before signing._`;
 }
 
-// ── COMMODITY PRICE ───────────────────────────────────────────────────────────
 async function getCommodityPrice(message) {
   const item = await ask(`What commodity is asked about in: "${message}"? Reply with ONE word: gold/silver/petrol/diesel/crypto`);
   try {
@@ -389,30 +457,27 @@ async function getCommodityPrice(message) {
       return `🏦 *Gold Price (Live)*\n\n💰 *₹${Math.round(per10g).toLocaleString('en-IN')} per 10g* (24K)\n🌍 $${data.price.toFixed(2)} per troy oz\n\n_Check jeweller for exact local price_`;
     }
   } catch {}
-  const result = await ask(`What is the approximate current price of ${item} in India? Give a helpful answer with context.`);
+  const result = await ask(`What is the approximate current price of ${item} in India?`);
   return `📊 *${item.toUpperCase()} Price*\n\n${result}`;
 }
 
-// ── TRAIN STATUS ──────────────────────────────────────────────────────────────
 async function checkTrainStatus(message) {
   const trainNum = await ask(`Extract train number from: "${message}". Reply with ONLY the number, or "none".`);
   if (trainNum === 'none' || !trainNum.match(/\d+/)) {
     return '🚂 Please provide a train number. Example: "Check train status 12951"';
   }
-  const result = await ask(`Give info about Indian Railway train number ${trainNum}. Include route, major stations, schedule. Suggest checking NTES app for live status.`);
+  const result = await ask(`Give info about Indian Railway train number ${trainNum}. Include route, major stations, schedule.`);
   return `🚂 *Train ${trainNum}*\n\n${result}\n\n🔗 Live status: *enquiry.indianrail.gov.in*\n📱 NTES app`;
 }
 
-// ── ORDER TRACKING ────────────────────────────────────────────────────────────
 async function trackOrder(message) {
   const orderId = await ask(`Extract order/tracking ID from: "${message}". Reply with ONLY the ID, or "none".`);
   if (orderId === 'none') {
-    return `📦 *Order Tracker*\n\nPaste your full order ID to track.\nExample: "Track order 403-1234567-8901234"\n\n🔗 Track directly:\nAmazon: amazon.in/orders\nFlipkart: flipkart.com/account/orders`;
+    return `📦 *Order Tracker*\n\nPaste your full order ID to track.\n\n🔗 Track directly:\nAmazon: amazon.in/orders\nFlipkart: flipkart.com/account/orders`;
   }
-  return `📦 *Order: ${orderId}*\n\nI can't access live order data directly.\n\n🔗 Track at:\n• Amazon: amazon.in/orders\n• Flipkart: flipkart.com/account/orders\n\n📧 _Forward your shipping SMS here and I'll parse the tracking info!_`;
+  return `📦 *Order: ${orderId}*\n\nI can't access live order data directly.\n\n🔗 Track at:\n• Amazon: amazon.in/orders\n• Flipkart: flipkart.com/account/orders`;
 }
 
-// ── MEETING TRANSCRIPTION ─────────────────────────────────────────────────────
 async function transcribeMeeting(audioBase64, mimeType = 'audio/ogg') {
   try {
     const { toFile } = require('groq-sdk');
@@ -437,5 +502,5 @@ module.exports = {
   generateInvoiceText, searchFlights, searchTrains, translateText,
   parseUPIMessage, parseUPIHistory, getSportsScore, writeSocialPost, calculateEMI,
   reviewResume, writeContract, getCommodityPrice, checkTrainStatus,
-  trackOrder, transcribeMeeting,
+  trackOrder, transcribeMeeting, calculateGST, calculateSIP,
 };
