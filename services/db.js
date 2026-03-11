@@ -432,7 +432,6 @@ async function getBotUserByAuthId(authUserId) {
     .single();
   return data;
 }
-
 module.exports = {
   supabase,
   getOrCreateUser,
