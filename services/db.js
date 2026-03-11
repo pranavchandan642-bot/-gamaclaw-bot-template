@@ -382,19 +382,50 @@ async function generateLinkingCode(authUserId, authEmail) {
 
 // Called when user sends linking code in bot
 async function claimLinkingCode(platformId, platform, code) {
-  // Find user with this code that hasn't expired
-  const { data: webUser } = await supabase
-    .from('users')
-    .select('*')
-    .eq('linking_code', code)
-    .eq('platform', 'web')
-    .single();
+  try {
+    // Find code in linking_codes table
+    const { data, error } = await supabase
+      .from('linking_codes')
+      .select('*')
+      .eq('code', code)
+      .eq('used', false)
+      .single();
 
-  if (!webUser) return { success: false, reason: 'invalid' };
+    if (error || !data) return { success: false, reason: 'invalid' };
 
-  const expired = new Date(webUser.linking_code_expiry) < new Date();
-  if (expired) return { success: false, reason: 'expired' };
+    // Check expiry
+    if (new Date(data.expires_at) < new Date()) {
+      return { success: false, reason: 'expired' };
+    }
 
+    // Find bot user
+    const { data: botUser } = await supabase
+      .from('users')
+      .select('*')
+      .eq('platform_id', platformId)
+      .eq('platform', platform)
+      .single();
+
+    if (!botUser) return { success: false, reason: 'invalid' };
+
+    // Link bot user to auth user
+    await supabase
+      .from('users')
+      .update({ auth_user_id: data.auth_user_id, email: data.auth_email })
+      .eq('id', botUser.id);
+
+    // Mark code as used
+    await supabase
+      .from('linking_codes')
+      .update({ used: true })
+      .eq('id', data.id);
+
+    return { success: true };
+  } catch (e) {
+    console.error('claimLinkingCode error:', e);
+    return { success: false, reason: 'error' };
+  }
+}
   // Find bot user
   const { data: botUser } = await supabase
     .from('users')
@@ -420,7 +451,6 @@ async function claimLinkingCode(platformId, platform, code) {
   }).eq('id', webUser.id);
 
   return { success: true, plan: botUser.plan };
-}
 
 // Get bot user by auth_user_id (for dashboard)
 async function getBotUserByAuthId(authUserId) {
