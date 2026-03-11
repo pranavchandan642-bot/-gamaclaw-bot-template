@@ -33,10 +33,8 @@ function getEarlyAdopterExpiry() {
 
 async function getOrCreateUser(platformId, platform, name = '') {
   try {
-    // For WhatsApp, platformId IS the phone number
     const phone = platform === 'whatsapp' ? platformId : null;
 
-    // 1. Try to find by platform_id + platform
     let { data: user } = await supabase
       .from('users')
       .select('*')
@@ -44,7 +42,6 @@ async function getOrCreateUser(platformId, platform, name = '') {
       .eq('platform', platform)
       .single();
 
-    // 2. If WhatsApp user not found, check if phone exists on another platform
     if (!user && phone) {
       const { data: linkedUser } = await supabase
         .from('users')
@@ -54,7 +51,6 @@ async function getOrCreateUser(platformId, platform, name = '') {
         .single();
 
       if (linkedUser) {
-        // Create WhatsApp entry linked to same plan
         const { data: newUser } = await supabase
           .from('users')
           .insert({
@@ -76,7 +72,6 @@ async function getOrCreateUser(platformId, platform, name = '') {
       }
     }
 
-    // 3. Create new user
     if (!user) {
       const slotAvailable = await isEarlyAdopterSlotAvailable();
       const isEarlyAdopter = slotAvailable;
@@ -112,7 +107,6 @@ async function getOrCreateUser(platformId, platform, name = '') {
       }
     }
 
-    // 4. Check if early adopter plan has expired
     if (user.is_early_adopter && user.early_adopter_expiry) {
       const expired = new Date(user.early_adopter_expiry) < new Date();
       if (expired && user.plan === 'pro') {
@@ -141,9 +135,7 @@ async function getEarlyAdopterCount() {
   return count || 0;
 }
 
-// Link phone number to existing Telegram/Discord user
 async function linkPhone(userId, phone) {
-  // Check if phone already linked to another account
   const { data: existing } = await supabase
     .from('users')
     .select('id, platform, plan')
@@ -152,7 +144,6 @@ async function linkPhone(userId, phone) {
     .single();
 
   if (existing) {
-    // Sync plan — give the better plan to both
     const betterPlan = existing.plan === 'business' || existing.plan === 'pro' ? existing.plan : null;
     if (betterPlan) {
       await supabase.from('users').update({ plan: betterPlan, phone, user_key: phone }).eq('id', userId);
@@ -172,7 +163,6 @@ async function updateUser(platformId, platform, updates) {
     .eq('platform', platform);
 }
 
-// Upgrade all linked accounts when one pays
 async function upgradeAllLinkedAccounts(userId, phone, plan, messagesPerDay, paymentId) {
   const updates = {
     plan,
@@ -181,10 +171,8 @@ async function upgradeAllLinkedAccounts(userId, phone, plan, messagesPerDay, pay
     razorpay_payment_id: paymentId,
   };
 
-  // Upgrade this user
   await supabase.from('users').update(updates).eq('id', userId);
 
-  // Upgrade all linked accounts by phone
   if (phone) {
     await supabase.from('users').update({ plan, messages_per_day: messagesPerDay })
       .eq('phone', phone)
@@ -216,8 +204,6 @@ async function incrementMessageCount(user) {
   });
 }
 
-// ── PLATFORM ACCESS CONTROL ───────────────────────────────────────────────────
-// WhatsApp and Discord are Pro/Business only
 function canAccessPlatform(platform, plan) {
   if (platform === 'telegram') return true;
   if (platform === 'whatsapp' || platform === 'discord') {
@@ -337,12 +323,10 @@ async function getReminders(userId) {
 
 // ── ACCOUNT LINKING ───────────────────────────────────────────────────────────
 
-// Generate a 6-digit linking code for a user (called from dashboard API)
 async function generateLinkingCode(authUserId, authEmail) {
   const code = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiry = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 min expiry
+  const expiry = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-  // Check if auth user already has a linked bot account
   const { data: existing } = await supabase
     .from('users')
     .select('id')
@@ -350,18 +334,14 @@ async function generateLinkingCode(authUserId, authEmail) {
     .single();
 
   if (existing) {
-    // Already linked — just update code
     await supabase.from('users').update({ linking_code: code, linking_code_expiry: expiry })
       .eq('auth_user_id', authUserId);
   } else {
-    // Store code temporarily — will be claimed when user sends it in bot
     await supabase.from('users').update({ linking_code: code, linking_code_expiry: expiry })
       .eq('email', authEmail);
 
-    // If no user with this email, create a placeholder
     const { data: emailUser } = await supabase.from('users').select('id').eq('email', authEmail).single();
     if (!emailUser) {
-      // Store in a temp table or just return code — bot will link on claim
       await supabase.from('users').insert({
         platform_id: authUserId,
         platform: 'web',
@@ -380,10 +360,8 @@ async function generateLinkingCode(authUserId, authEmail) {
   return code;
 }
 
-// Called when user sends linking code in bot
 async function claimLinkingCode(platformId, platform, code) {
   try {
-    // Find code in linking_codes table
     const { data, error } = await supabase
       .from('linking_codes')
       .select('*')
@@ -393,12 +371,10 @@ async function claimLinkingCode(platformId, platform, code) {
 
     if (error || !data) return { success: false, reason: 'invalid' };
 
-    // Check expiry
     if (new Date(data.expires_at) < new Date()) {
       return { success: false, reason: 'expired' };
     }
 
-    // Find bot user
     const { data: botUser } = await supabase
       .from('users')
       .select('*')
@@ -408,13 +384,11 @@ async function claimLinkingCode(platformId, platform, code) {
 
     if (!botUser) return { success: false, reason: 'invalid' };
 
-    // Link bot user to auth user
     await supabase
       .from('users')
       .update({ auth_user_id: data.auth_user_id, email: data.auth_email })
       .eq('id', botUser.id);
 
-    // Mark code as used
     await supabase
       .from('linking_codes')
       .update({ used: true })
@@ -426,33 +400,7 @@ async function claimLinkingCode(platformId, platform, code) {
     return { success: false, reason: 'error' };
   }
 }
-  // Find bot user
-  const { data: botUser } = await supabase
-    .from('users')
-    .select('*')
-    .eq('platform_id', platformId)
-    .eq('platform', platform)
-    .single();
 
-  if (!botUser) return { success: false, reason: 'no_bot_user' };
-
-  // Link bot user to auth user — sync plan
-  await supabase.from('users').update({
-    auth_user_id: webUser.auth_user_id,
-    email: webUser.email,
-    linking_code: null,
-    linking_code_expiry: null,
-  }).eq('id', botUser.id);
-
-  // Update web user with bot info
-  await supabase.from('users').update({
-    linking_code: null,
-    linking_code_expiry: null,
-  }).eq('id', webUser.id);
-
-  return { success: true, plan: botUser.plan };
-
-// Get bot user by auth_user_id (for dashboard)
 async function getBotUserByAuthId(authUserId) {
   const { data } = await supabase
     .from('users')
@@ -462,6 +410,8 @@ async function getBotUserByAuthId(authUserId) {
     .single();
   return data;
 }
+
+// ── EXPORTS ───────────────────────────────────────────────────────────────────
 module.exports = {
   supabase,
   getOrCreateUser,
