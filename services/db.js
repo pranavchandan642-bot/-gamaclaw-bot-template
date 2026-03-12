@@ -410,10 +410,44 @@ async function getBotUserByAuthId(authUserId) {
     .single();
   return data;
 }
+    // ── AI MODEL ──────────────────────────────────────────────────────────────────
+
+ const AVAILABLE_MODELS = {
+  'groq':    { label: 'Groq (Llama 3) — Fast & Free',     provider: 'groq' },
+  'claude':  { label: 'Claude (Anthropic) — Smart',        provider: 'anthropic' },
+  'gpt':     { label: 'GPT-4o (OpenAI) — Powerful',        provider: 'openai' },
+  'gemini':  { label: 'Gemini (Google) — Multimodal',      provider: 'google' },
+ };
+
+ const MODEL_PLAN_ACCESS = {
+  free:     ['groq'],
+  pro:      ['groq', 'claude', 'gpt', 'gemini'],
+  business: ['groq', 'claude', 'gpt', 'gemini'],
+ };
+
+ async function getUserModel(userId) {
+  const { data } = await supabase
+    .from('users')
+    .select('ai_model')
+    .eq('id', userId)
+    .single();
+  return data?.ai_model || 'groq';
+ }
+
+ async function setUserModel(userId, model) {
+  await supabase
+    .from('users')
+    .update({ ai_model: model })
+    .eq('id', userId);
+ }
 
 // ── EXPORTS ───────────────────────────────────────────────────────────────────
 module.exports = {
   supabase,
+  getUserModel,
+  setUserModel,
+  AVAILABLE_MODELS,
+  MODEL_PLAN_ACCESS,
   getOrCreateUser,
   updateUser,
   linkPhone,

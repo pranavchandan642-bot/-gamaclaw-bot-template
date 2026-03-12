@@ -493,8 +493,35 @@ async function transcribeMeeting(audioBase64, mimeType = 'audio/ogg') {
     return '❌ Could not transcribe. Make sure it\'s a clear recording under 10MB.';
   }
 }
+  // ── AI MODEL ──────────────────────────────────────────────────────────────────
+const AVAILABLE_MODELS = {
+  groq:   { label: 'Groq (Llama 3) — Fast & Free' },
+  claude: { label: 'Claude Opus — Smart' },
+  gpt:    { label: 'GPT-4o (OpenAI) — Powerful' },
+  gemini: { label: 'Gemini 2.0 Flash — Multimodal' },
+};
+
+const MODEL_PLAN_ACCESS = {
+  free:     ['groq'],
+  pro:      ['groq', 'claude', 'gpt', 'gemini'],
+  business: ['groq', 'claude', 'gpt', 'gemini'],
+};
+
+async function getUserModel(userId) {
+  const { data } = await supabase
+    .from('users').select('ai_model').eq('id', userId).single();
+  return data?.ai_model || 'groq';
+}
+
+async function setUserModel(userId, model) {
+  await supabase.from('users').update({ ai_model: model }).eq('id', userId);
+}
 
 module.exports = {
+  getUserModel,
+setUserModel,
+ AVAILABLE_MODELS,
+ MODEL_PLAN_ACCESS,
   detectIntent, draftEmail, extractEventDetails, extractExpense, summarizeExpenses,
   summarizeMeeting, extractPriceAlert, extractMemory, extractLead, draftFollowUp,
   generateBriefing, transcribeAndDetect, chat,

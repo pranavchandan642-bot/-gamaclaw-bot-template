@@ -64,10 +64,10 @@ function planInfo(user) {
 // ── UPGRADE OPTIONS ───────────────────────────────────────────────────────────
 async function upgradeOptions(userId = null, userEmail = '', userName = '') {
   const payment = require('./payments');
-  
+
   let proLink = 'Generating...';
   let bizLink = 'Generating...';
-  
+
   if (userId) {
     try {
       const [pl, bl] = await Promise.all([
@@ -124,7 +124,7 @@ function helpMessage(plan) {
     `*📦 Track Order:* "Track my Amazon order 403-1234567"\n` +
     `*💳 UPI History:* Paste multiple UPI SMS messages for summary\n` +
     `*📞 Transcribe:* Send a voice note of your meeting → summary\n\n` +
-    `*/plan* — View your plan\n*/upgrade* — See pricing\n*/link [phone]* — Link your accounts across platforms\n*/help* — This message\n\n` +
+    `*/plan* — View your plan\n*/upgrade* — See pricing\n*/setmodel* — Switch AI model (Groq/Claude/GPT/Gemini)\n*/link [phone]* — Link your accounts across platforms\n*/help* — This message\n\n` +
     (!isPro ? `⭐ Type */upgrade* to unlock calendar, expenses, voice & more!` : `🎉 You have full Pro access!`);
 }
 
@@ -135,7 +135,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   const p = getPending(user.id || platformId);
 
   // ── PLATFORM ACCESS CONTROL ───────────────────────────────────────────────
-  // WhatsApp and Discord require Pro or Business plan
   if (!db.canAccessPlatform(platform, user.plan)) {
     return `🔒 *WhatsApp & Discord access requires Pro or Business plan!*\n\n` +
       `You're currently on the *FREE* plan.\n\n` +
@@ -168,6 +167,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   }
 
   // ── COMMANDS ─────────────────────────────────────────────────────────────────
+
   if (text === '/start') {
     const earlyAdopterMsg = user.is_early_adopter
       ? `\n\n🎖️ *You're one of our first 100 users!*\nYou get *FREE Pro access for 1 month* — enjoy all features on us! 🎉`
@@ -181,6 +181,57 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   if (text === '/plan') return planInfo(user);
   if (text === '/upgrade') return await upgradeOptions(user.id, user.email || '', user.name || '');
 
+  if (text === '/briefing') {
+    if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) {
+      return `☀️ Daily briefing is a *Pro feature*!${upgradeMessage(user.plan)}`;
+    }
+    return await handleBriefing(user);
+  }
+
+  // ── SETMODEL COMMAND ──────────────────────────────────────────────────────
+  if (text.startsWith('/setmodel')) {
+    const arg = text.replace('/setmodel', '').trim().toLowerCase();
+    const allowed = db.MODEL_PLAN_ACCESS ? db.MODEL_PLAN_ACCESS[user.plan] || ['groq'] : ['groq'];
+    const models = db.AVAILABLE_MODELS || {
+      groq:   { label: 'Groq (Llama 3) — Fast & Free' },
+      claude: { label: 'Claude (Anthropic) — Smart' },
+      gpt:    { label: 'GPT-4o (OpenAI) — Powerful' },
+      gemini: { label: 'Gemini (Google) — Multimodal' },
+    };
+
+    // No argument → show model menu
+    if (!arg) {
+      let current = 'groq';
+      try { current = await db.getUserModel(user.id); } catch {}
+      const lines = Object.entries(models).map(([key, info]) => {
+        const isAllowed = allowed.includes(key);
+        const isCurrent = key === current;
+        return `${isCurrent ? '✅' : isAllowed ? '◻️' : '🔒'} *${key}* — ${info.label}` +
+          (!isAllowed ? ' _(Pro required)_' : '') +
+          (isCurrent ? ' ← current' : '');
+      });
+      return `🤖 *Choose your AI Model*\n\n${lines.join('\n')}\n\n` +
+        `Usage: */setmodel [name]*\nExample: \`/setmodel claude\`\n\n` +
+        (!allowed.includes('claude') ? `⭐ Upgrade to Pro to unlock Claude, GPT-4o & Gemini!` : '');
+    }
+
+    // Validate model name
+    if (!models[arg]) {
+      return `❌ Unknown model *${arg}*\n\nAvailable: ${Object.keys(models).join(', ')}\n\nTry: */setmodel groq*`;
+    }
+
+    // Check plan access
+    if (!allowed.includes(arg)) {
+      return `🔒 *${models[arg].label}* requires a Pro or Business plan.\n\n` +
+        `You're on *${user.plan.toUpperCase()}*.\n\n` +
+        `👉 Type */upgrade* to unlock all AI models!`;
+    }
+
+    // Save the model
+    try { await db.setUserModel(user.id, arg); } catch {}
+    return `✅ *AI Model updated!*\n\n🤖 Now using: *${models[arg].label}*\n\nAll your messages will now use this model.\nSwitch anytime with */setmodel*`;
+  }
+
   // ── LINK PHONE COMMAND ────────────────────────────────────────────────────
   if (text.startsWith('/link')) {
     const phone = text.replace('/link', '').trim().replace(/\s/g, '');
@@ -190,7 +241,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
         `Usage: */link +91XXXXXXXXXX*\n\n` +
         `Example: \`/link +919876543210\``;
     }
-    // Validate phone format
     if (!/^\+?[0-9]{10,15}$/.test(phone)) {
       return `❌ Invalid phone number. Use format: */link +91XXXXXXXXXX*`;
     }
@@ -209,41 +259,37 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       return `❌ Could not link phone number. Please try again.`;
     }
   }
-    // ── AUTO DETECT PHONE NUMBER ──────────────────────────────────────────────
- const phoneMatch = text.match(/^(\+?[0-9]{10,13})$/);
+
+  // ── AUTO DETECT PHONE NUMBER ──────────────────────────────────────────────
+  const phoneMatch = text.match(/^(\+?[0-9]{10,13})$/);
   if (phoneMatch) {
-  const phone = phoneMatch[1].startsWith('+') ? phoneMatch[1] : '+91' + phoneMatch[1];
-  try {
-    const result = await db.linkPhone(user.id, phone);
-    return `✅ *Phone number linked!*\n\n📱 ${phone}\n\nYour account is now connected across all platforms! 🎉`;
-  } catch {
-    return `❌ Could not link. Try: */link +91XXXXXXXXXX*`;
+    const phone = phoneMatch[1].startsWith('+') ? phoneMatch[1] : '+91' + phoneMatch[1];
+    try {
+      await db.linkPhone(user.id, phone);
+      return `✅ *Phone number linked!*\n\n📱 ${phone}\n\nYour account is now connected across all platforms! 🎉`;
+    } catch {
+      return `❌ Could not link. Try: */link +91XXXXXXXXXX*`;
+    }
   }
-}
- // ── CONNECT COMMAND (link dashboard account) ──────────────────────────────
-   if (text.startsWith('/connect')) {
-     const code = text.replace('/connect', '').trim();
-     if (!code || code.length !== 6) {
-       return `🔗 *Link your dashboard account!*\n\nUsage: */connect 123456*\n\nGet your code from *gamaclaw.vercel.app/dashboard*`;
-     } 
-     try {
-       const result = await db.claimLinkingCode(platformId, platform, code);
-       if (result.success) {
+
+  // ── CONNECT COMMAND (link dashboard account) ──────────────────────────────
+  if (text.startsWith('/connect')) {
+    const code = text.replace('/connect', '').trim();
+    if (!code || code.length !== 6) {
+      return `🔗 *Link your dashboard account!*\n\nUsage: */connect 123456*\n\nGet your code from *gamaclaw.vercel.app/dashboard*`;
+    }
+    try {
+      const result = await db.claimLinkingCode(platformId, platform, code);
+      if (result.success) {
         return `✅ *Account linked successfully!*\n\n🌐 Your dashboard is now connected!\nVisit: gamaclaw.vercel.app/dashboard`;
-       } else if (result.reason === 'expired') {
+      } else if (result.reason === 'expired') {
         return `⏱ Code expired! Generate a new one at *gamaclaw.vercel.app/dashboard*`;
       } else {
         return `❌ Invalid code. Get a new one at *gamaclaw.vercel.app/dashboard*`;
       }
     } catch {
       return `❌ Could not link. Please try again.`;
-     }
-   }
-  if (text === '/briefing') {
-    if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) {
-      return `☀️ Daily briefing is a *Pro feature*!${upgradeMessage(user.plan)}`;
     }
-    return await handleBriefing(user);
   }
 
   // ── PENDING EMAIL CONFIRM ─────────────────────────────────────────────────
@@ -251,8 +297,8 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   if (pendingEmail) {
     const t = text.toLowerCase().trim();
     const isSend = ['send','yes','ok','okay','confirm','y','sure','haan','kar do',
-                    'bhej do','send karo'].some(w => t === w) || 
-                   t.includes('send it') || t.includes('send now') || 
+                    'bhej do','send karo'].some(w => t === w) ||
+                   t.includes('send it') || t.includes('send now') ||
                    t.includes('go ahead') || t.includes('yes send') ||
                    t.includes('bhej') || t.includes('kar do');
     const isCancel = ['cancel','no','nahi','mat bhejo','stop','dont send'].some(w => t === w);
@@ -292,6 +338,10 @@ async function processMessage(platformId, platform, messageText, userName = '', 
 
   await db.incrementMessageCount(user);
 
+  // ── LOAD USER MODEL ───────────────────────────────────────────────────────
+  let userModel = 'groq';
+  try { userModel = await db.getUserModel(user.id || platformId); } catch {}
+
   // ── INTENT DETECTION ──────────────────────────────────────────────────────
   const VALID_INTENTS = ['SEND_EMAIL','READ_CALENDAR','ADD_CALENDAR','SUMMARIZE',
     'LOG_EXPENSE','VIEW_EXPENSES','ADD_PRICE_ALERT','VIEW_PRICE_ALERTS','SAVE_MEMORY',
@@ -303,7 +353,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     'TRANSCRIBE_MEETING','CHAT'];
   let rawIntent = 'CHAT';
   try { rawIntent = await ai.detectIntent(text); } catch {}
-  const intent = VALID_INTENTS.includes(rawIntent.trim().toUpperCase()) 
+  const intent = VALID_INTENTS.includes(rawIntent.trim().toUpperCase())
     ? rawIntent.trim().toUpperCase() : 'CHAT';
   const memoryCtx = await db.getMemoryString(user.id || platformId);
   const history = await db.getRecentMessages(user.id || platformId);
@@ -473,7 +523,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     case 'VIEW_REMINDERS': {
       const reminders = await db.getReminders(user.id || platformId);
       if (!reminders.length) return '⏰ No active reminders.\n\nSay "Remind me daily at 7pm to call mom" to add one!';
-      return `⏰ *Your Reminders (${reminders.length}):*\n\n` + 
+      return `⏰ *Your Reminders (${reminders.length}):*\n\n` +
         reminders.map((r, i) => `${i+1}. *${r.text}*\n   🕐 ${r.time} · 🔄 ${r.recurring}`).join('\n\n');
     }
 
@@ -539,7 +589,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
 
     default: {
       const lowerText = text.toLowerCase();
-      
+
       if (lowerText.includes('gst') || lowerText.includes('tax') && lowerText.includes('%')) {
         const result = await ai.calculateGST(text).catch(() => null);
         if (result) {
@@ -568,7 +618,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
         }
       }
 
-      if (lowerText.includes('translate') || lowerText.includes('in hindi') || 
+      if (lowerText.includes('translate') || lowerText.includes('in hindi') ||
           lowerText.includes('in english') || lowerText.includes('meaning of')) {
         const result = await ai.translateText(text).catch(() => null);
         if (result && !result.includes('❌')) {
@@ -587,7 +637,8 @@ async function processMessage(platformId, platform, messageText, userName = '', 
         }
       }
 
-      const reply = await ai.chat(text, history, memoryCtx);
+      // Pass userModel to ai.chat so it uses the user's preferred model
+      const reply = await ai.chat(text, history, memoryCtx, userModel);
       await db.saveMessage(user.id || platformId, 'user', text);
       await db.saveMessage(user.id || platformId, 'assistant', reply);
       return reply;
@@ -604,12 +655,30 @@ function formatEmailPreview(draft) {
 
 async function handleBriefing(user) {
   try {
-    const events = await calendarSvc.getUpcomingEvents(1);
-    const expenses = await db.getExpenseSummary(user.id, 1);
-    const memCtx = await db.getMemoryString(user.id);
+    // Try calendar but don't crash if not connected
+    let events = [];
+    try {
+      events = await calendarSvc.getUpcomingEvents(1);
+    } catch {
+      events = [];
+    }
+
+    // Try expenses but don't crash if DB issue
+    let expenses = [];
+    try {
+      expenses = await db.getExpenseSummary(user.id, 1);
+    } catch {
+      expenses = [];
+    }
+
+    const memCtx = await db.getMemoryString(user.id).catch(() => '');
     return await ai.generateBriefing(user.name, events, expenses, memCtx);
   } catch (e) {
-    return `☀️ *Good morning!*\n\nCould not load full briefing: ${e.message}`;
+    return `☀️ *Good morning, ${user.name || 'there'}!*\n\n` +
+      `Here's your GamaClaw briefing:\n\n` +
+      `📅 Calendar: Not connected yet\n` +
+      `💰 Expenses: No data yet\n\n` +
+      `_Connect Google Calendar via Render env vars to get full briefings!_`;
   }
 }
 
