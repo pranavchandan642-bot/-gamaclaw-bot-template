@@ -426,10 +426,10 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     forcedIntent = 'CHAT';
   }
   // Detect schedule message intent from natural language
-  if (/schedule.*(message|msg|text)|send.*(every|daily|weekly|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(lowerCheck)) {
+  
+  if (/schedule.*(message|msg|text|to)|send.*(every|daily|weekly|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|(message|msg|text).*every.*(day|week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday|am|pm)/i.test(lowerCheck)) {
     forcedIntent = 'SCHEDULE_MESSAGE';
-  }
-
+   }
   let rawIntent = forcedIntent || 'CHAT';
   try { if (!forcedIntent) rawIntent = await ai.detectIntent(text); } catch {}
   const intent = VALID_INTENTS.includes(rawIntent.trim().toUpperCase())
