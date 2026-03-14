@@ -94,30 +94,43 @@ async function askJSON(prompt) {
 // ── INTENT DETECTION ──────────────────────────────────────────────────────────
 
 async function detectIntent(message) {
-  const intent = await ask(`Classify this message into ONE intent. Reply with ONLY the intent word, nothing else.
+  const intent = await ask(`You are an intent classifier for an AI assistant. Classify the message into ONE intent.
 
-IMPORTANT RULES:
-- Short greetings like "hi", "hii", "hello", "hey", "good morning", "sup", "hiya" = CHAT
-- Casual conversation, small talk, jokes = CHAT
-- Questions about features or commands like "what can you do" = HELP
-- Everything else = most relevant intent from the list below
+RULES — read carefully:
+- Greetings ("hi", "hello", "hey", "hii", "good morning", "sup") = CHAT
+- Casual talk, jokes, questions = CHAT
+- "what can you do", "help me" = HELP
 
 TASK RULES:
-- "add task", "new task", "task:", "to do", "todo", "I need to", "remind me to do" = ADD_TASK
-- "show tasks", "my tasks", "pending tasks", "what are my tasks" = VIEW_TASKS
-- "done task", "complete task", "finished task", "mark done", "task 1 done" = COMPLETE_TASK
-- "delete task", "remove task X", "cancel task", "done task" = DELETE_TASK
-- "remove alert", "delete alert", "cancel alert", "remove price alert" = VIEW_PRICE_ALERTS
+- "add task", "task:", "to do", "todo", "I need to do" = ADD_TASK
+- "show tasks", "my tasks", "pending tasks", "list tasks" = VIEW_TASKS  
+- "done task N", "complete task N", "finished task N", "task N done", "mark task N" = COMPLETE_TASK
+- "delete task N", "remove task N", "cancel task N" = DELETE_TASK
+- IMPORTANT: "remove alert", "delete alert", "remove price alert" = VIEW_PRICE_ALERTS (NOT DELETE_TASK)
+
+REMINDER RULES:
+- "remind me", "set reminder", "reminder at", "alert me at time" = SET_REMINDER
+- IMPORTANT: "call X tomorrow" WITHOUT "remind" = ADD_TASK (not SET_REMINDER)
+- "remind me to call X" = SET_REMINDER
+
+PRICE ALERT RULES:
+- "alert me when price drops", "notify when below price" = ADD_PRICE_ALERT
+- "remove alert", "delete alert", "show alerts", "my alerts" = VIEW_PRICE_ALERTS
 
 GST RULES:
-- "file GST", "help with GST", "GST filing", "how to file GST", "GSTR" = GST_FILING
-- "GST summary", "my GST", "GST report", "how much GST" = GST_SUMMARY
+- "file GST", "help with GST filing", "GSTR", "how to file GST" = GST_FILING
+- "GST summary", "my GST", "GST report" = GST_SUMMARY
+- "GST on amount", "calculate GST" = CHAT (handled separately)
 
-Intents:
+EXPENSE RULES:
+- "I spent", "paid for", "bought", "expense" = LOG_EXPENSE
+- "show expenses", "my spending", "expense summary" = VIEW_EXPENSES
+
+Intents list:
 SEND_EMAIL, READ_CALENDAR, ADD_CALENDAR, SUMMARIZE, LOG_EXPENSE,
 VIEW_EXPENSES, ADD_PRICE_ALERT, VIEW_PRICE_ALERTS, SAVE_MEMORY,
 MORNING_BRIEFING, ADD_LEAD, VIEW_LEADS, DRAFT_FOLLOWUP,
-VOICE_NOTE, UPGRADE_PLAN, VIEW_PLAN, HELP,
+UPGRADE_PLAN, VIEW_PLAN, HELP,
 WEATHER, NEWS, WEB_SEARCH, SET_REMINDER, VIEW_REMINDERS,
 INVOICE, FLIGHT_SEARCH, TRAIN_SEARCH, TRANSLATE,
 UPI_PARSE, UPI_HISTORY, SPORTS_SCORE, SOCIAL_POST, EMI_CALC,
@@ -126,6 +139,8 @@ TRAIN_STATUS, TRACK_ORDER, TRANSCRIBE_MEETING,
 ADD_TASK, VIEW_TASKS, COMPLETE_TASK, DELETE_TASK,
 GST_FILING, GST_SUMMARY,
 CHAT
+
+Reply with ONLY the intent word. Nothing else.
 
 Message: "${message}"`);
   return intent.toUpperCase().trim();
@@ -251,6 +266,7 @@ YOUR PERSONALITY:
 - Format responses with Markdown (bold, bullets, etc.)
 - Be concise — no unnecessary padding or repetition
 - Speak naturally, not like a robot
+- CRITICAL: Always reply in the SAME language the user wrote in. If they write in English → reply in English. If they write in Hindi → reply in Hindi. If they write in Hinglish (mixed) → reply in Hinglish. Never switch languages unless asked
 
 YOUR CAPABILITIES — you can help with ANYTHING:
 - Answer any question (facts, history, science, sports, entertainment, coding, math)
@@ -315,7 +331,7 @@ async function calculateSIP(message) {
 
 // ── WEATHER ───────────────────────────────────────────────────────────────────
 async function getWeather(message) {
-  const city = await ask(`Extract only the city name from: "${message}". Reply with ONLY the city name, nothing else.`);
+  const city = await ask(`Extract ONLY the city name from this weather query: "${message}"\nReply with ONLY the city name, nothing else. No explanations.\nExamples: "weather in kharar" → "Kharar" | "mumbai mein mausam" → "Mumbai" | "jammu weather" → "Jammu"`);
   const fetch = require('node-fetch');
   try {
     const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`);
