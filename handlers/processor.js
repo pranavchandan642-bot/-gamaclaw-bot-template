@@ -26,28 +26,18 @@ function getPending(userId) {
 async function savePendingEmail(userId, emailData) {
   pendingCache[userId] = pendingCache[userId] || {};
   pendingCache[userId].pendingEmail = emailData;
-  pendingCache[userId].pendingEmailTime = Date.now();
   pendingCache[userId].awaitingEmailConfirm = true;
   await db.saveMemory(userId, 'pending_email', JSON.stringify(emailData)).catch(()=>{});
 }
 
 async function loadPendingEmail(userId) {
-  if (pendingCache[userId]?.pendingEmail) {
-    // Auto-expire after 5 minutes
-    const age = Date.now() - (pendingCache[userId].pendingEmailTime || 0);
-    if (age > 5 * 60 * 1000) {
-      await clearPendingEmail(userId);
-      return null;
-    }
-    return pendingCache[userId].pendingEmail;
-  }
+  if (pendingCache[userId]?.pendingEmail) return pendingCache[userId].pendingEmail;
   try {
     const mem = await db.getMemory(userId, 'pending_email');
     if (mem) {
       const email = JSON.parse(mem);
       pendingCache[userId] = pendingCache[userId] || {};
       pendingCache[userId].pendingEmail = email;
-      pendingCache[userId].pendingEmailTime = Date.now();
       pendingCache[userId].awaitingEmailConfirm = true;
       return email;
     }
@@ -159,6 +149,17 @@ async function processMessage(platformId, platform, messageText, userName = '', 
 
   let text = messageText?.trim() || '';
 
+  // ── STRIP SURROUNDING QUOTES ──────────────────────────────────────────────
+  // Users sometimes send "command" with quotes
+  text = text.replace(/^["'""]|["'""]$/g, '').trim();
+
+  // ── NORMALIZE SETMODEL COMMAND ────────────────────────────────────────────
+  // Handle "setmodel gemini", "/set model claude", "set model groq" etc
+  const setModelMatch = text.match(/^\/?\s*set\s*model\s*(.*)$/i);
+  if (setModelMatch) {
+    text = '/setmodel ' + setModelMatch[1].trim().toLowerCase();
+  }
+
   // ── VOICE NOTE ────────────────────────────────────────────────────────────
   if (audioBase64) {
     if (!db.PLAN_LIMITS[user.plan]?.features.includes('voice')) {
@@ -260,6 +261,11 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     const isEdit = ['edit','change','redo'].includes(t) || t.includes('edit');
 
     if (isSend) {
+      if (!pendingEmail.to) {
+        // Still no recipient — ask for it
+        p.awaitingEmailAddress = true;
+        return `📧 Who should I send this email to? Please share their email address.`;
+      }
       try {
         await emailSvc.sendEmail(pendingEmail.to, pendingEmail.subject, pendingEmail.body);
         await clearPendingEmail(user.id || platformId);
@@ -267,12 +273,27 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       } catch (e) { await clearPendingEmail(user.id || platformId); return `❌ Failed: ${e.message}`; }
     } else if (isCancel) {
       await clearPendingEmail(user.id || platformId);
-      return '❌ Email cancelled.';
+      return 'Got it, email cancelled! 👍 What else can I help with?';
     } else if (isEdit) {
       await clearPendingEmail(user.id || platformId);
-      return '✏️ Tell me what changes you want.';
+      return '✏️ Sure! Tell me what changes you want and I\'ll redraft it.';
     } else {
-      return `📧 *Unsent email waiting!*\n\n*To:* ${pendingEmail.to}\n*Subject:* ${pendingEmail.subject}\n\nReply *send* ✅ or *cancel* ❌`;
+      // If user sends something completely unrelated — clear the pending email and process normally
+      const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+      if (emailRegex.test(t) && p.awaitingEmailAddress) {
+        const emailMatch = t.match(emailRegex);
+        pendingEmail.to = emailMatch[0];
+        await savePendingEmail(user.id || platformId, pendingEmail);
+        p.awaitingEmailAddress = false;
+        return formatEmailPreview(pendingEmail);
+      }
+      // User sent something else — remind them gently but don't block
+      if (t.length > 10 && !t.includes('@')) {
+        await clearPendingEmail(user.id || platformId);
+        // Process their actual message below by falling through
+      } else {
+        return `📧 *Email ready to send!*\n\n*To:* ${pendingEmail.to || 'No recipient yet'}\n*Subject:* ${pendingEmail.subject}\n\nReply *send* ✅ or *cancel* ❌`;
+      }
     }
   }
 
@@ -307,11 +328,41 @@ async function processMessage(platformId, platform, messageText, userName = '', 
 
   // ── IMAGE GENERATION BLOCK ───────────────────────────────────────────────
   const lowerCheck = text.toLowerCase();
+
+  // ── BULK DELETE REMINDERS ─────────────────────────────────────────────────
+  if ((lowerCheck.includes('delete all') || lowerCheck.includes('clear all') || lowerCheck.includes('remove all')) &&
+      (lowerCheck.includes('reminder') || lowerCheck.includes('reminders'))) {
+    await db.supabase.from('reminders').update({ active: false }).eq('user_id', user.id || platformId);
+    return '✅ All reminders cleared!';
+  }
+
+  // ── DELETE SPECIFIC REMINDER ──────────────────────────────────────────────
+  if ((lowerCheck.includes('delete reminder') || lowerCheck.includes('remove reminder') || lowerCheck.includes('cancel reminder'))) {
+    const reminders = await db.getReminders(user.id || platformId);
+    if (!reminders.length) return 'You have no active reminders!';
+    const num = text.match(/\d+/);
+    if (num) {
+      const idx = parseInt(num[0]) - 1;
+      if (reminders[idx]) {
+        await db.supabase.from('reminders').update({ active: false }).eq('id', reminders[idx].id);
+        return `✅ Reminder "${reminders[idx].text}" deleted!`;
+      }
+    }
+    return `Which reminder to delete?\n\n` + reminders.map((r,i) => `${i+1}. ${r.text} (${r.time})`).join('\n') + `\n\nSay "Delete reminder 1"`;
+  }
+
   if ((lowerCheck.includes('generate') || lowerCheck.includes('create') || lowerCheck.includes('make') ||
        lowerCheck.includes('बनाओ') || lowerCheck.includes('जेनरेट') || lowerCheck.includes('बना दो')) &&
       (lowerCheck.includes('image') || lowerCheck.includes('photo') || lowerCheck.includes('picture') ||
        lowerCheck.includes('इमेज') || lowerCheck.includes('फोटो') || lowerCheck.includes('तस्वीर'))) {
     return `🖼️ I can't generate images yet — that feature is coming soon!\n\nBut I can help you with:\n• Writing a description of what you want\n• Finding similar images online\n• Anything else!\n\nWhat else can I help you with? 🦀`;
+  }
+
+  // ── DELETE ALL REMINDERS (broader match) ────────────────────────────────
+  if (lowerCheck === 'delete all' || lowerCheck === 'clear all reminders' ||
+      lowerCheck === 'delete all reminders' || lowerCheck === 'remove all reminders') {
+    await db.supabase.from('reminders').update({ active: false }).eq('user_id', user.id || platformId);
+    return '✅ All reminders cleared! You have no active reminders now.';
   }
 
   // ── PRICE ALERT REMOVAL SHORTCUT ─────────────────────────────────────────
@@ -332,8 +383,19 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       `\n\nWhich one to remove? Say "Remove alert 1"`;
   }
 
-  let rawIntent = 'CHAT';
-  try { rawIntent = await ai.detectIntent(text); } catch {}
+  // ── FORCE CORRECT INTENTS FOR COMMON PATTERNS ───────────────────────────
+  // Prevent "write email" from triggering DRAFT_FOLLOWUP
+  let forcedIntent = null;
+  if (/^(write|draft|compose|create).*(email|mail)/i.test(lowerCheck) && !lowerCheck.includes('follow')) {
+    forcedIntent = 'SEND_EMAIL';
+  }
+  // Prevent Hinglish questions from triggering HELP
+  if (/kya|kaisa|karo|kaise|bhai|yaar|mujhe|mera|tera/i.test(lowerCheck) && lowerCheck.length > 15) {
+    forcedIntent = 'CHAT';
+  }
+
+  let rawIntent = forcedIntent || 'CHAT';
+  try { if (!forcedIntent) rawIntent = await ai.detectIntent(text); } catch {}
   const intent = VALID_INTENTS.includes(rawIntent.trim().toUpperCase())
     ? rawIntent.trim().toUpperCase() : 'CHAT';
   const memoryCtx = await db.getMemoryString(user.id || platformId);
