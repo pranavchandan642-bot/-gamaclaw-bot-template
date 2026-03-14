@@ -106,7 +106,8 @@ TASK RULES:
 - "add task", "new task", "task:", "to do", "todo", "I need to", "remind me to do" = ADD_TASK
 - "show tasks", "my tasks", "pending tasks", "what are my tasks" = VIEW_TASKS
 - "done task", "complete task", "finished task", "mark done", "task 1 done" = COMPLETE_TASK
-- "delete task", "remove task", "cancel task" = DELETE_TASK
+- "delete task", "remove task X", "cancel task", "done task" = DELETE_TASK
+- "remove alert", "delete alert", "cancel alert", "remove price alert" = VIEW_PRICE_ALERTS
 
 GST RULES:
 - "file GST", "help with GST", "GST filing", "how to file GST", "GSTR" = GST_FILING
