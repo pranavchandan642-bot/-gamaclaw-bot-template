@@ -1,21 +1,20 @@
 const express = require('express');
 const router = express.Router();
 const { processMessage } = require('./processor');
+const db = require('../services/db');
 
 const VERIFY_TOKEN   = 'gamaclaw123';
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_ID;
 
 // ── DEDUPLICATION CACHE ───────────────────────────────────────────────────────
-// Prevents processing the same message twice when Meta retries the webhook
 const processedMessages = new Map();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL = 5 * 60 * 1000;
 
 function isDuplicate(msgId) {
   if (!msgId) return false;
   if (processedMessages.has(msgId)) return true;
   processedMessages.set(msgId, Date.now());
-  // Clean up old entries
   for (const [id, ts] of processedMessages.entries()) {
     if (Date.now() - ts > CACHE_TTL) processedMessages.delete(id);
   }
@@ -37,7 +36,6 @@ router.get('/', (req, res) => {
 
 // ── INCOMING MESSAGES ─────────────────────────────────────────────────────────
 router.post('/', express.json(), async (req, res) => {
-  // ✅ Respond to Meta IMMEDIATELY to prevent retries
   res.sendStatus(200);
 
   try {
@@ -53,10 +51,8 @@ router.post('/', express.json(), async (req, res) => {
     const msgId       = msg.id;
     const profileName = value?.contacts?.[0]?.profile?.name || '';
 
-    // Ignore status updates
     if (msg.type === 'status') return;
 
-    // ✅ Deduplicate — ignore if already processed
     if (isDuplicate(msgId)) {
       console.log(`⚡ Duplicate message ignored: ${msgId}`);
       return;
@@ -88,7 +84,20 @@ router.post('/', express.json(), async (req, res) => {
         text = '[Voice message - could not process]';
       }
     } else {
-      return; // Ignore unsupported types
+      return;
+    }
+
+    // ── OPT-IN LINK DETECTION ─────────────────────────────────────────────────
+    // When a client clicks a freelancer's opt-in link, the message starts with
+    // "Hi " or "Hello " followed by the freelancer's bot name
+    // Format: "Hi GamaClaw:USERID" — we embed the freelancer's user ID in the link
+    if (text) {
+      const optInMatch = text.match(/^Hi GamaClaw:([a-zA-Z0-9_-]+)/i);
+      if (optInMatch) {
+        const freelancerId = optInMatch[1];
+        await handleClientOptIn(from, profileName, freelancerId);
+        return;
+      }
     }
 
     const response  = await processMessage(from, 'whatsapp', text, profileName, audioBase64);
@@ -99,6 +108,50 @@ router.post('/', express.json(), async (req, res) => {
     console.error('WhatsApp webhook error:', err.message);
   }
 });
+
+// ── HANDLE CLIENT OPT-IN ──────────────────────────────────────────────────────
+async function handleClientOptIn(clientPhone, clientName, freelancerId) {
+  try {
+    // Save client as a lead under the freelancer's account
+    await db.supabase.from('leads').insert({
+      user_id: freelancerId,
+      name: clientName || clientPhone,
+      email: null,
+      source: 'whatsapp_optin',
+      notes: `WhatsApp: ${clientPhone}`,
+      status: 'new',
+      phone: clientPhone,
+      created_at: new Date().toISOString(),
+    });
+
+    console.log(`✅ Client opted in: ${clientPhone} → freelancer ${freelancerId}`);
+
+    // Welcome the client
+    await sendWhatsAppMessage(clientPhone,
+      `👋 Hi ${clientName || 'there'}! You're now connected.\n\nI'll pass your message along. How can I help you?`
+    );
+
+    // Notify the freelancer
+    const { data: freelancer } = await db.supabase
+      .from('users')
+      .select('platform_id, platform, name')
+      .eq('id', freelancerId)
+      .single();
+
+    if (freelancer) {
+      const notification = `🔔 *New client opted in!*\n\n👤 ${clientName || 'Unknown'}\n📱 +${clientPhone}\n\nThey are now saved as a lead. You can schedule messages to them!`;
+      if (freelancer.platform === 'whatsapp') {
+        await sendWhatsAppMessage(freelancer.platform_id, formatForWhatsApp(notification));
+      } else if (freelancer.platform === 'telegram') {
+        const TelegramBot = require('node-telegram-bot-api');
+        const bot = new TelegramBot(process.env.TELEGRAM_TOKEN);
+        await bot.sendMessage(freelancer.platform_id, notification, { parse_mode: 'Markdown' });
+      }
+    }
+  } catch (err) {
+    console.error('Client opt-in error:', err.message);
+  }
+}
 
 // ── FORMAT FOR WHATSAPP ───────────────────────────────────────────────────────
 function formatForWhatsApp(text) {

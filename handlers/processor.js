@@ -246,6 +246,13 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       return `❌ Invalid code.`;
     } catch { return `❌ Could not link. Try again.`; }
   }
+   // ── MY OPT-IN LINK ────────────────────────────────────────────────────────────
+ if (text === '/mylink' || lowerTextCmd === 'my link' || lowerTextCmd === 'get my link') {
+  const waNumber = process.env.WHATSAPP_PHONE_ID_DISPLAY || '919XXXXXXXXX'; // your bot's WA number
+  const encodedMsg = encodeURIComponent(`Hi GamaClaw:${user.id}`);
+  const link = `https://wa.me/${waNumber}?text=${encodedMsg}`;
+  return `🔗 *Your Client Opt-in Link*\n\n${link}\n\n📲 Share this with your clients.\nWhen they click it → they message your bot → you can schedule messages to them!\n\nThey'll be saved automatically under your leads.`;
+ }
 
   // ── SCHEDULED MESSAGES COMMANDS ───────────────────────────────────────────
   const lowerTextCmd = text.toLowerCase().trim();
