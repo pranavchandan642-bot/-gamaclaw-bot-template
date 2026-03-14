@@ -80,6 +80,9 @@ app.listen(PORT, async () => {
   require('./handlers/telegram');
   require('./handlers/discord').startDiscord();
 
+  // Start reminder scheduler
+  require('./services/scheduler');
+
   // Load and restart all previously deployed bots from Supabase
   await botManager.loadDeployedBots();
 });
