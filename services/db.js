@@ -440,11 +440,24 @@ async function getBotUserByAuthId(authUserId) {
     .update({ ai_model: model })
     .eq('id', userId);
  }
+  function getTimezoneFromPhone(phone) {
+  if (!phone) return 5.5;
+  const prefixes = {
+    '+91': 5.5, '+92': 5, '+880': 6, '+977': 5.75,
+    '+1': -5, '+44': 0, '+971': 4, '+65': 8, '+61': 10,
+    '+49': 1, '+33': 1, '+966': 3, '+974': 3, '+60': 8,
+  };
+  for (const [prefix, offset] of Object.entries(prefixes)) {
+    if (phone.startsWith(prefix)) return offset;
+  }
+  return 5.5;
+}
 
 // ── EXPORTS ───────────────────────────────────────────────────────────────────
 module.exports = {
   supabase,
   getUserModel,
+  getTimezoneFromPhone,
   setUserModel,
   AVAILABLE_MODELS,
   MODEL_PLAN_ACCESS,
