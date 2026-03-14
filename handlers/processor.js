@@ -522,7 +522,8 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       return await ai.webSearch(text);
 
     case 'SET_REMINDER': {
-      const reminder = await ai.extractReminder(text);
+      const tz = db.getTimezoneFromPhone(user.phone);
+      const reminder = await ai.extractReminder(text, tz);
       if (!reminder) return '❌ Try: "Remind me to take medicine daily at 9pm"';
       try {
         await db.saveReminder(user.id || platformId, reminder);

@@ -46,27 +46,29 @@ cron.schedule('* * * * *', async () => {
   try {
     const { data: reminders, error } = await db.supabase
       .from('reminders')
-      .select('*, users(id, platform_id, platform, name)')
+      .select('*, users(id, platform_id, platform, name, phone)')
       .eq('active', true);
 
     if (error || !reminders?.length) return;
 
-    const now = new Date();
-    const HH  = now.getHours().toString().padStart(2, '0');
-    const MM  = now.getMinutes().toString().padStart(2, '0');
-    const currentTime = `${HH}:${MM}`;
-    const today    = now.toISOString().split('T')[0];
-    const dayNames = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
-    const todayName = dayNames[now.getDay()];
-
     for (const reminder of reminders) {
       if (!reminder.users) continue;
 
-      // Check time matches
+      // ── Get current time in user's timezone ──────────────────────────────
+      const userTz    = db.getTimezoneFromPhone(reminder.users?.phone);
+      const now       = new Date(new Date().getTime() + (userTz * 60 * 60 * 1000));
+      const HH        = now.getHours().toString().padStart(2, '0');
+      const MM        = now.getMinutes().toString().padStart(2, '0');
+      const currentTime = `${HH}:${MM}`;
+      const today     = now.toISOString().split('T')[0];
+      const dayNames  = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+      const todayName = dayNames[now.getDay()];
+
+      // ── Check time matches ────────────────────────────────────────────────
       const reminderTime = (reminder.time || '').substring(0, 5);
       if (reminderTime !== currentTime) continue;
 
-      // Check date/recurrence
+      // ── Check date/recurrence ─────────────────────────────────────────────
       let shouldFire = false;
       switch (reminder.recurring) {
         case 'once':
@@ -79,11 +81,9 @@ cron.schedule('* * * * *', async () => {
           shouldFire = !reminder.day_of_week || todayName === reminder.day_of_week.toLowerCase();
           break;
         case 'monthly':
-          if (reminder.date) {
-            shouldFire = now.getDate() === new Date(reminder.date).getDate();
-          } else {
-            shouldFire = true;
-          }
+          shouldFire = reminder.date
+            ? now.getDate() === new Date(reminder.date).getDate()
+            : true;
           break;
         default:
           shouldFire = true;
@@ -91,10 +91,10 @@ cron.schedule('* * * * *', async () => {
 
       if (!shouldFire) continue;
 
-      // Fire the reminder
+      // ── Fire the reminder ─────────────────────────────────────────────────
       await sendReminder(reminder.users, reminder.text);
 
-      // Deactivate one-time reminders
+      // Deactivate one-time reminders after firing
       if (reminder.recurring === 'once') {
         await db.supabase.from('reminders').update({ active: false }).eq('id', reminder.id);
       }
@@ -102,7 +102,7 @@ cron.schedule('* * * * *', async () => {
   } catch (err) {
     console.error('Reminder scheduler error:', err.message);
   }
-}, { timezone: 'Asia/Kolkata' });
+});
 
 // ── SEND REMINDER ─────────────────────────────────────────────────────────────
 async function sendReminder(user, text) {

@@ -156,6 +156,30 @@ async function extractMemory(message) {
   return await askJSON(`Extract what to remember from: "${message}"\nReturn JSON: {"key":"short label","value":"what to remember"}`);
 }
 
+// ── AUTO MEMORY ───────────────────────────────────────────────────────────────
+async function extractAutoMemory(message) {
+  const result = await askJSON(`Analyze this message and extract any important personal information worth remembering long-term.
+
+Message: "${message}"
+
+Only extract if the message CLEARLY contains:
+- Person's name ("I am Pranav", "My name is...")
+- Job/profession ("I am a developer", "I work at...")
+- Location ("I live in Mumbai", "I am from...")
+- Business info ("My startup is...", "My company...")
+- Important preferences ("I prefer...", "I always...")
+- Contact info ("My email is...", "My phone...")
+- Family info ("My wife's name...", "I have 2 kids...")
+- Goals ("I am trying to...", "My goal is...")
+
+If nothing important found, return: {"found": false}
+If found, return: {"found": true, "key": "short_label", "value": "what to remember"}
+
+IMPORTANT: Return {"found": false} for casual chat, questions, calculations, greetings.
+Only return {"found": true} for genuinely useful long-term personal info.`);
+  return result;
+}
+
 // ── LEADS ─────────────────────────────────────────────────────────────────────
 async function extractLead(message) {
   return await askJSON(`Extract lead info from: "${message}"\nReturn JSON: {"name":"...","email":"or null","source":"...","notes":"..."}`);
@@ -238,7 +262,6 @@ ${historyText}`;
     return await askWithModel(`${systemPrompt}\n\nUser: ${message}\nGamaClaw:`, aiModel, 1200);
   } catch (err) {
     console.error(`${aiModel} chat error:`, err.message);
-    // Fallback to Groq if selected model fails
     if (aiModel !== 'groq') {
       return await askGroq(`${systemPrompt}\n\nUser: ${message}\nGamaClaw:`, 1200);
     }
@@ -339,13 +362,12 @@ async function webSearch(message) {
   return `🔍 *Research Results*\n\n${result}`;
 }
 
-// Replace the extractReminder function in services/ai.js with this:
+// ── REMINDER ─────────────────────────────────────────────────────────────────
+async function extractReminder(message, timezoneOffset = 5.5) {
+  // Get current time in user's timezone
+  const now = new Date(new Date().getTime() + (timezoneOffset * 60 * 60 * 1000));
 
-async function extractReminder(message) {
-  const now = new Date();
-
-  // ── Handle relative times BEFORE calling AI ──────────────────────────────
-  // "in X minutes", "in X hours", "after X minutes"
+  // Handle relative times: "in X minutes", "in X hours"
   const relativeMatch = message.match(/in\s+(\d+)\s*(minute|min|minutes|mins|hour|hours|hr|hrs)/i);
   if (relativeMatch) {
     const amount = parseInt(relativeMatch[1]);
@@ -362,34 +384,26 @@ async function extractReminder(message) {
     const MM   = future.getMinutes().toString().padStart(2, '0');
     const date = future.toISOString().split('T')[0];
 
-    // Extract what to remind about using AI
     const textResult = await askJSON(`Extract the reminder text (what to remind) from: "${message}"\nReturn JSON: {"text":"what to remind about"}`);
     const text = textResult?.text || message;
 
-    return {
-      text,
-      time: `${HH}:${MM}`,
-      date,
-      recurring: 'once',
-      day_of_week: null,
-    };
+    return { text, time: `${HH}:${MM}`, date, recurring: 'once', day_of_week: null };
   }
 
-  // ── Handle "at HH:MM" or "at X pm/am" ────────────────────────────────────
-  // Pass current datetime so AI can resolve "today", "tomorrow" correctly
-  const nowIST = new Date(now.getTime() + (5.5 * 60 * 60 * 1000)); // IST offset
-  const currentISO = nowIST.toISOString().replace('Z', '+05:30');
+  // Handle absolute times: "at 5pm", "daily at 8am", "tomorrow at 9am"
+  const currentHH   = now.getHours().toString().padStart(2, '0');
+  const currentMM   = now.getMinutes().toString().padStart(2, '0');
+  const currentDate = now.toISOString().split('T')[0];
 
   return await askJSON(`Extract reminder from: "${message}"
-Current time (IST): ${currentISO}
-Current date: ${nowIST.toISOString().split('T')[0]}
-Current time: ${nowIST.getHours().toString().padStart(2,'0')}:${nowIST.getMinutes().toString().padStart(2,'0')}
+Current time: ${currentHH}:${currentMM}
+Current date: ${currentDate}
 
 IMPORTANT RULES:
-- "at 5pm" means today at 17:00 (or tomorrow if already past)
-- "tomorrow at 9am" means next day at 09:00
-- "daily at 8am" means recurring=daily, time=08:00
-- "every Monday" means recurring=weekly, day_of_week=monday
+- "at 5pm" = 17:00 today (tomorrow if already past)
+- "tomorrow at 9am" = next day at 09:00
+- "daily at 8am" = recurring=daily, time=08:00
+- "every Monday" = recurring=weekly, day_of_week=monday
 - ALWAYS return time in 24-hour HH:MM format
 
 Return JSON: {"text":"what to remind","time":"HH:MM","date":"YYYY-MM-DD or null","recurring":"daily|weekly|monthly|once","day_of_week":"monday etc or null"}`);
@@ -535,29 +549,7 @@ async function trackOrder(message) {
   }
   return `📦 *Order: ${orderId}*\n\nI can't access live order data directly.\n\n🔗 Track at:\n• Amazon: amazon.in/orders\n• Flipkart: flipkart.com/account/orders`;
 }
- async function extractAutoMemory(message) {
-  const result = await askJSON(`Analyze this message and extract any important personal information worth remembering long-term.
 
-Message: "${message}"
-
-Only extract if the message CLEARLY contains:
-- Person's name ("I am Pranav", "My name is...")
-- Job/profession ("I am a developer", "I work at...")
-- Location ("I live in Mumbai", "I am from...")
-- Business info ("My startup is...", "My company...")
-- Important preferences ("I prefer...", "I always...")
-- Contact info ("My email is...", "My phone...")
-- Family info ("My wife's name...", "I have 2 kids...")
-- Goals ("I am trying to...", "My goal is...")
-
-If nothing important found, return: {"found": false}
-If found, return: {"found": true, "key": "short_label", "value": "what to remember"}
-
-IMPORTANT: Return {"found": false} for casual chat, questions, calculations, greetings.
-Only return {"found": true} for genuinely useful long-term personal info.`);
-
-  return result;
-}
 async function transcribeMeeting(audioBase64, mimeType = 'audio/ogg') {
   try {
     const { toFile } = require('groq-sdk');
@@ -573,11 +565,23 @@ async function transcribeMeeting(audioBase64, mimeType = 'audio/ogg') {
     return '❌ Could not transcribe. Make sure it\'s a clear recording under 10MB.';
   }
 }
+ function getTimezoneFromPhone(phone) {
+  if (!phone) return 5.5;
+  const prefixes = {
+    '+91': 5.5, '+92': 5, '+880': 6, '+977': 5.75,
+    '+1': -5, '+44': 0, '+971': 4, '+65': 8, '+61': 10,
+  };
+  for (const [prefix, offset] of Object.entries(prefixes)) {
+    if (phone.startsWith(prefix)) return offset;
+  }
+  return 5.5;
+}
 
 module.exports = {
-  extractAutoMemory,detectIntent, draftEmail, extractEventDetails, extractExpense, summarizeExpenses,
-  summarizeMeeting, extractPriceAlert, extractMemory, extractLead, draftFollowUp,
-  generateBriefing, transcribeAndDetect, chat,
+  askWithModel, askGroq, askClaude, askGPT, askGemini, ask, askJSON,
+  detectIntent, draftEmail, extractEventDetails, extractExpense, summarizeExpenses,
+  summarizeMeeting, extractPriceAlert, extractMemory, extractAutoMemory,
+  extractLead, draftFollowUp, generateBriefing, transcribeAndDetect, chat,
   getWeather, getNews, webSearch, extractReminder, extractInvoiceDetails,
   generateInvoiceText, searchFlights, searchTrains, translateText,
   parseUPIMessage, parseUPIHistory, getSportsScore, writeSocialPost, calculateEMI,
