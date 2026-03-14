@@ -26,18 +26,28 @@ function getPending(userId) {
 async function savePendingEmail(userId, emailData) {
   pendingCache[userId] = pendingCache[userId] || {};
   pendingCache[userId].pendingEmail = emailData;
+  pendingCache[userId].pendingEmailTime = Date.now();
   pendingCache[userId].awaitingEmailConfirm = true;
   await db.saveMemory(userId, 'pending_email', JSON.stringify(emailData)).catch(()=>{});
 }
 
 async function loadPendingEmail(userId) {
-  if (pendingCache[userId]?.pendingEmail) return pendingCache[userId].pendingEmail;
+  if (pendingCache[userId]?.pendingEmail) {
+    // Auto-expire after 5 minutes
+    const age = Date.now() - (pendingCache[userId].pendingEmailTime || 0);
+    if (age > 5 * 60 * 1000) {
+      await clearPendingEmail(userId);
+      return null;
+    }
+    return pendingCache[userId].pendingEmail;
+  }
   try {
     const mem = await db.getMemory(userId, 'pending_email');
     if (mem) {
       const email = JSON.parse(mem);
       pendingCache[userId] = pendingCache[userId] || {};
       pendingCache[userId].pendingEmail = email;
+      pendingCache[userId].pendingEmailTime = Date.now();
       pendingCache[userId].awaitingEmailConfirm = true;
       return email;
     }
