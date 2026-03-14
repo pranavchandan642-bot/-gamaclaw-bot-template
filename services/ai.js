@@ -339,8 +339,60 @@ async function webSearch(message) {
   return `🔍 *Research Results*\n\n${result}`;
 }
 
+// Replace the extractReminder function in services/ai.js with this:
+
 async function extractReminder(message) {
-  return await askJSON(`Extract reminder from: "${message}"\nToday: ${new Date().toISOString()}\nReturn JSON: {"text":"what to remind","time":"HH:MM","date":"YYYY-MM-DD or null","recurring":"daily|weekly|monthly|once","day_of_week":"monday etc or null"}`);
+  const now = new Date();
+
+  // ── Handle relative times BEFORE calling AI ──────────────────────────────
+  // "in X minutes", "in X hours", "after X minutes"
+  const relativeMatch = message.match(/in\s+(\d+)\s*(minute|min|minutes|mins|hour|hours|hr|hrs)/i);
+  if (relativeMatch) {
+    const amount = parseInt(relativeMatch[1]);
+    const unit   = relativeMatch[2].toLowerCase();
+    const future = new Date(now);
+
+    if (unit.startsWith('h')) {
+      future.setHours(future.getHours() + amount);
+    } else {
+      future.setMinutes(future.getMinutes() + amount);
+    }
+
+    const HH   = future.getHours().toString().padStart(2, '0');
+    const MM   = future.getMinutes().toString().padStart(2, '0');
+    const date = future.toISOString().split('T')[0];
+
+    // Extract what to remind about using AI
+    const textResult = await askJSON(`Extract the reminder text (what to remind) from: "${message}"\nReturn JSON: {"text":"what to remind about"}`);
+    const text = textResult?.text || message;
+
+    return {
+      text,
+      time: `${HH}:${MM}`,
+      date,
+      recurring: 'once',
+      day_of_week: null,
+    };
+  }
+
+  // ── Handle "at HH:MM" or "at X pm/am" ────────────────────────────────────
+  // Pass current datetime so AI can resolve "today", "tomorrow" correctly
+  const nowIST = new Date(now.getTime() + (5.5 * 60 * 60 * 1000)); // IST offset
+  const currentISO = nowIST.toISOString().replace('Z', '+05:30');
+
+  return await askJSON(`Extract reminder from: "${message}"
+Current time (IST): ${currentISO}
+Current date: ${nowIST.toISOString().split('T')[0]}
+Current time: ${nowIST.getHours().toString().padStart(2,'0')}:${nowIST.getMinutes().toString().padStart(2,'0')}
+
+IMPORTANT RULES:
+- "at 5pm" means today at 17:00 (or tomorrow if already past)
+- "tomorrow at 9am" means next day at 09:00
+- "daily at 8am" means recurring=daily, time=08:00
+- "every Monday" means recurring=weekly, day_of_week=monday
+- ALWAYS return time in 24-hour HH:MM format
+
+Return JSON: {"text":"what to remind","time":"HH:MM","date":"YYYY-MM-DD or null","recurring":"daily|weekly|monthly|once","day_of_week":"monday etc or null"}`);
 }
 
 async function extractInvoiceDetails(message) {
