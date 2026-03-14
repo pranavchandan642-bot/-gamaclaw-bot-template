@@ -92,6 +92,7 @@ async function askJSON(prompt) {
 }
 
 // ── INTENT DETECTION ──────────────────────────────────────────────────────────
+
 async function detectIntent(message) {
   const intent = await ask(`Classify this message into ONE intent. Reply with ONLY the intent word, nothing else.
 
@@ -100,6 +101,16 @@ IMPORTANT RULES:
 - Casual conversation, small talk, jokes = CHAT
 - Questions about features or commands like "what can you do" = HELP
 - Everything else = most relevant intent from the list below
+
+TASK RULES:
+- "add task", "new task", "task:", "to do", "todo", "I need to", "remind me to do" = ADD_TASK
+- "show tasks", "my tasks", "pending tasks", "what are my tasks" = VIEW_TASKS
+- "done task", "complete task", "finished task", "mark done", "task 1 done" = COMPLETE_TASK
+- "delete task", "remove task", "cancel task" = DELETE_TASK
+
+GST RULES:
+- "file GST", "help with GST", "GST filing", "how to file GST", "GSTR" = GST_FILING
+- "GST summary", "my GST", "GST report", "how much GST" = GST_SUMMARY
 
 Intents:
 SEND_EMAIL, READ_CALENDAR, ADD_CALENDAR, SUMMARIZE, LOG_EXPENSE,
@@ -110,12 +121,14 @@ WEATHER, NEWS, WEB_SEARCH, SET_REMINDER, VIEW_REMINDERS,
 INVOICE, FLIGHT_SEARCH, TRAIN_SEARCH, TRANSLATE,
 UPI_PARSE, UPI_HISTORY, SPORTS_SCORE, SOCIAL_POST, EMI_CALC,
 REVIEW_RESUME, WRITE_CONTRACT, COMMODITY_PRICE,
-TRAIN_STATUS, TRACK_ORDER, TRANSCRIBE_MEETING, CHAT
+TRAIN_STATUS, TRACK_ORDER, TRANSCRIBE_MEETING,
+ADD_TASK, VIEW_TASKS, COMPLETE_TASK, DELETE_TASK,
+GST_FILING, GST_SUMMARY,
+CHAT
 
 Message: "${message}"`);
   return intent.toUpperCase().trim();
 }
-
 // ── EMAIL ─────────────────────────────────────────────────────────────────────
 async function draftEmail(topic, memoryContext = '') {
   return await askJSON(`Write a professional email about: "${topic}"\n${memoryContext}\nReturn JSON: {"subject":"...","body":"...","to":"email if mentioned or null"}`);
@@ -577,10 +590,99 @@ async function transcribeMeeting(audioBase64, mimeType = 'audio/ogg') {
   return 5.5;
 }
 
+// ── TASK EXTRACTION ───────────────────────────────────────────────────────────
+
+async function extractTask(message) {
+  return await askJSON(`Extract task from: "${message}"
+Today: ${new Date().toISOString().split('T')[0]}
+
+Return JSON: {"title":"task description","due_date":"YYYY-MM-DD or null","priority":"high|medium|low"}
+
+Examples:
+- "Add task call Rahul tomorrow" → {"title":"Call Rahul","due_date":"tomorrow's date","priority":"medium"}
+- "Urgent: fix the bug today" → {"title":"Fix the bug","due_date":"today's date","priority":"high"}
+- "Task: review proposal" → {"title":"Review proposal","due_date":null,"priority":"medium"}`);
+}
+
+// ── GST FILING ASSISTANT ──────────────────────────────────────────────────────
+async function generateGSTFiling(message, expenses, memoryCtx = '') {
+  const now = new Date();
+  const month = now.toLocaleString('en-IN', { month: 'long' });
+  const year = now.getFullYear();
+
+  // Calculate totals from expenses
+  const total = expenses.reduce((s, e) => s + Number(e.amount), 0);
+  const byCategory = {};
+  expenses.forEach(e => {
+    byCategory[e.category] = (byCategory[e.category] || 0) + Number(e.amount);
+  });
+
+  const expenseBreakdown = Object.entries(byCategory)
+    .map(([cat, amt]) => `${cat}: ₹${Number(amt).toLocaleString('en-IN')}`)
+    .join(', ');
+
+  return await ask(`You are a GST filing assistant for Indian businesses.
+
+User message: "${message}"
+Month: ${month} ${year}
+Total expenses tracked: ₹${total.toLocaleString('en-IN')}
+Expense breakdown: ${expenseBreakdown || 'No expenses tracked yet'}
+${memoryCtx}
+
+Help the user with GST filing. Provide:
+1. What they need to file (GSTR-1, GSTR-3B based on their situation)
+2. Key deadlines for ${month}
+3. Input Tax Credit (ITC) they can claim based on their expenses
+4. Step-by-step filing guidance
+5. Direct link: gstin.gov.in
+
+Keep response practical and specific to India. Use ₹ for amounts.`, 1500);
+}
+
+async function generateGSTSummary(expenses) {
+  if (!expenses.length) {
+    return `🧾 *GST Summary*\n\nNo expenses tracked yet.\n\nStart tracking: "I spent ₹5000 on office supplies"\n\nThen say "GST summary" for your monthly report.`;
+  }
+
+  const total = expenses.reduce((s, e) => s + Number(e.amount), 0);
+  const byCategory = {};
+  expenses.forEach(e => {
+    byCategory[e.category] = (byCategory[e.category] || 0) + Number(e.amount);
+  });
+
+  // GST rates by category (approximate)
+  const gstRates = {
+    food: 5, travel: 5, shopping: 18, bills: 18,
+    health: 5, entertainment: 18, other: 18,
+  };
+
+  let itcTotal = 0;
+  let breakdown = '';
+  for (const [cat, amt] of Object.entries(byCategory)) {
+    const rate = gstRates[cat] || 18;
+    const gst = (amt * rate) / (100 + rate);
+    itcTotal += gst;
+    breakdown += `• ${cat}: ₹${Math.round(amt).toLocaleString('en-IN')} (ITC: ₹${Math.round(gst).toLocaleString('en-IN')} @${rate}%)\n`;
+  }
+
+  return `🧾 *GST Summary — Last 30 Days*\n\n` +
+    `━━━━━━━━━━━━━━━━━\n` +
+    `💰 Total Expenses: *₹${Math.round(total).toLocaleString('en-IN')}*\n` +
+    `📊 Estimated ITC: *₹${Math.round(itcTotal).toLocaleString('en-IN')}*\n` +
+    `━━━━━━━━━━━━━━━━━\n\n` +
+    `*Breakdown:*\n${breakdown}\n` +
+    `━━━━━━━━━━━━━━━━━\n` +
+    `📅 *GSTR-3B due:* 20th of next month\n` +
+    `📅 *GSTR-1 due:* 11th of next month\n\n` +
+    `🔗 File at: *gstin.gov.in*\n\n` +
+    `_Say "Help me file GST" for step-by-step guidance_`;
+}
+
+
 module.exports = {
   askWithModel, askGroq, askClaude, askGPT, askGemini, ask, askJSON,
   detectIntent, draftEmail, extractEventDetails, extractExpense, summarizeExpenses,
-  summarizeMeeting, extractPriceAlert, extractMemory, extractAutoMemory,
+  summarizeMeeting, extractPriceAlert, extractMemory, extractAutoMemory,extractTask, generateGSTFiling, generateGSTSummary,
   extractLead, draftFollowUp, generateBriefing, transcribeAndDetect, chat,
   getWeather, getNews, webSearch, extractReminder, extractInvoiceDetails,
   generateInvoiceText, searchFlights, searchTrains, translateText,

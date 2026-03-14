@@ -452,11 +452,45 @@ async function getBotUserByAuthId(authUserId) {
   }
   return 5.5;
 }
+// ── TASKS ─────────────────────────────────────────────────────────────────────
+
+async function saveTask(userId, title, dueDate = null, priority = 'medium') {
+  const { error } = await supabase.from('tasks').insert({
+    user_id: userId,
+    title,
+    due_date: dueDate || null,
+    priority: priority || 'medium',
+    status: 'pending',
+    created_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
+}
+
+async function getTasks(userId, status = 'pending') {
+  const { data } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', status)
+    .order('created_at', { ascending: true });
+  return data || [];
+}
+
+async function completeTask(taskId) {
+  await supabase.from('tasks').update({
+    status: 'completed',
+    completed_at: new Date().toISOString(),
+  }).eq('id', taskId);
+}
+
+async function deleteTask(taskId) {
+  await supabase.from('tasks').delete().eq('id', taskId);
+}
 
 // ── EXPORTS ───────────────────────────────────────────────────────────────────
 module.exports = {
   supabase,
-  getUserModel,
+  getUserModel, saveTask, getTasks, completeTask, deleteTask,
   getTimezoneFromPhone,
   setUserModel,
   AVAILABLE_MODELS,
