@@ -104,6 +104,192 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
+// ── SCHEDULED LEAD FOLLOW-UP SCHEDULER (every minute) ───────────────────────
+  cron.schedule('* * * * *', async () => {
+  try {
+    console.log('🔍 Checking scheduled follow-up messages...');
+
+    const dueMessages = await db.getDueScheduledMessages();
+
+    console.log('📦 dueMessages:', JSON.stringify(dueMessages, null, 2));
+
+    if (!dueMessages?.length) {
+      console.log('ℹ️ No due scheduled messages found');
+      return;
+    }
+
+
+    for (const item of dueMessages) {
+      try {
+        const lead = item.leads;
+        const user = item.users;
+
+        if (!lead) {
+          console.log(`Skipping ${item.id}: lead not found`);
+          continue;
+        }
+
+        if (!lead.phone) {
+          console.log(`Skipping ${item.id}: lead has no phone`);
+          continue;
+        }
+
+        if (!lead.whatsapp_opted_in) {
+          console.log(`Skipping ${item.id}: lead has not opted in`);
+          continue;
+        }
+
+        if (!lead.active) {
+          console.log(`Skipping ${item.id}: lead inactive`);
+          continue;
+        }
+
+        if (!user) {
+          console.log(`Skipping ${item.id}: user not found`);
+          continue;
+        }
+
+        if (user.plan !== 'business') {
+          console.log(`Skipping ${item.id}: user is not on business plan`);
+          continue;
+        }
+
+        await sendWhatsAppMessage(lead.phone, item.message);
+
+        await db.markScheduledMessageSent(
+          item.id,
+          item.recurring,
+          item.time,
+          item.date,
+          item.day_of_week,
+          db.getTimezoneFromPhone(user.phone)
+        );
+
+        console.log(`✅ Scheduled follow-up sent to ${lead.name} (${lead.phone})`);
+      } catch (err) {
+        console.error(`❌ Scheduled follow-up error for ${item.id}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('Scheduled follow-up scheduler error:', err.message);
+  }
+});
+
+// ── SCHEDULED LEAD FOLLOW-UP SCHEDULER (every minute) ───────────────────────
+cron.schedule('* * * * *', async () => {
+  try {
+    const dueMessages = await db.getDueScheduledMessages();
+
+    if (!dueMessages?.length) return;
+
+    for (const item of dueMessages) {
+      try {
+        const lead = item.leads;
+        const user = item.users;
+
+        if (!lead) {
+          console.log(`Skipping ${item.id}: lead not found`);
+          continue;
+        }
+
+        if (!lead.phone) {
+          console.log(`Skipping ${item.id}: lead has no phone`);
+          continue;
+        }
+
+        if (!lead.whatsapp_opted_in) {
+          console.log(`Skipping ${item.id}: lead has not opted in`);
+          continue;
+        }
+
+        if (!lead.active) {
+          console.log(`Skipping ${item.id}: lead is inactive`);
+          continue;
+        }
+
+        if (!user) {
+          console.log(`Skipping ${item.id}: user not found`);
+          continue;
+        }
+
+        if (user.plan !== 'business') {
+          console.log(`Skipping ${item.id}: user is not on business plan`);
+          continue;
+        }
+
+        await sendWhatsAppMessage(lead.phone, item.message);
+
+        await db.markScheduledMessageSent(
+          item.id,
+          item.recurring,
+          item.time,
+          item.date,
+          item.day_of_week,
+          db.getTimezoneFromPhone(user.phone)
+        );
+
+        console.log(`✅ Scheduled follow-up sent to ${lead.name} (${lead.phone})`);
+      } catch (err) {
+        console.error(`❌ Scheduled message error for ${item.id}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('Scheduled lead follow-up scheduler error:', err.message);
+  }
+});
+
+// ── SEND WHATSAPP MESSAGE ─────────────────────────────────────────────────────
+async function sendWhatsAppMessage(to, text) {
+  try {
+    const fetch = require('node-fetch');
+
+    await fetch(`https://graph.facebook.com/v22.0/${process.env.WHATSAPP_PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to,
+        type: 'text',
+        text: { body: text },
+      }),
+    });
+
+    console.log(`✅ WhatsApp message sent to ${to}`);
+  } catch (err) {
+    console.error(`❌ WhatsApp send failed to ${to}:`, err.message);
+    throw err;
+  }
+}
+
+// ── SEND WHATSAPP MESSAGE ─────────────────────────────────────────────────────
+async function sendWhatsAppMessage(to, text) {
+  try {
+    const fetch = require('node-fetch');
+
+    await fetch(`https://graph.facebook.com/v22.0/${process.env.WHATSAPP_PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to,
+        type: 'text',
+        text: { body: text },
+      }),
+    });
+
+    console.log(`✅ WhatsApp message sent to ${to}`);
+  } catch (err) {
+    console.error(`❌ WhatsApp send failed to ${to}:`, err.message);
+    throw err;
+  }
+}
+
 // ── SEND REMINDER ─────────────────────────────────────────────────────────────
 async function sendReminder(user, text) {
   try {
@@ -146,4 +332,4 @@ async function sendReminder(user, text) {
   }
 }
 
-console.log('⏰ Morning briefing + reminder scheduler started');
+console.log('⏰ Morning briefing + reminder + scheduled follow-up scheduler started');
