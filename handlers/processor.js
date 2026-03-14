@@ -3,7 +3,7 @@ const db = require('../services/db');
 const emailSvc = require('../services/email');
 const calendarSvc = require('../services/calendar');
 
- async function runAutoMemory(userId, userMessage) {
+async function runAutoMemory(userId, userMessage) {
   try {
     const result = await ai.extractAutoMemory(userMessage);
     if (result?.found && result?.key && result?.value) {
@@ -15,7 +15,7 @@ const calendarSvc = require('../services/calendar');
   }
 }
 
-// Pending actions per user - persisted in Supabase memories
+// Pending actions per user
 const pendingCache = {};
 
 function getPending(userId) {
@@ -76,27 +76,21 @@ function planInfo(user) {
 // ── UPGRADE OPTIONS ───────────────────────────────────────────────────────────
 async function upgradeOptions(userId = null, userEmail = '', userName = '') {
   const payment = require('./payments');
-
-  let proLink = 'Generating...';
-  let bizLink = 'Generating...';
-
+  let proLink = 'https://gamaclaw.vercel.app/#pricing';
+  let bizLink = 'https://gamaclaw.vercel.app/#pricing';
   if (userId) {
     try {
       const [pl, bl] = await Promise.all([
         payment.createPaymentLink(userId, 'pro_india', userEmail, userName),
         payment.createPaymentLink(userId, 'business_india', userEmail, userName),
       ]);
-      proLink = pl || 'https://gamaclaw.vercel.app/#pricing';
-      bizLink = bl || 'https://gamaclaw.vercel.app/#pricing';
-    } catch {
-      proLink = 'https://gamaclaw.vercel.app/#pricing';
-      bizLink = 'https://gamaclaw.vercel.app/#pricing';
-    }
+      proLink = pl || proLink;
+      bizLink = bl || bizLink;
+    } catch {}
   }
-
   return `⭐ *GamaClaw Plans*\n\n` +
-    `🆓 *Free* — ₹0/month\n• 30 messages/day\n• Email draft & send\n• All calculators (EMI, GST, SIP)\n• Weather, News, Translate\n\n` +
-    `🚀 *Pro* — ₹499/month\n• 500 messages/day\n• Everything in Free +\n• Expense tracker\n• Invoice generator\n• Lead CRM\n• Flight & train search\n• Voice notes\n• Price alerts\n• Priority support\n\n` +
+    `🆓 *Free* — ₹0/month\n• 30 messages/day\n• Email, Tasks, Reminders\n• EMI, GST, SIP calculators\n• Weather, News, Translate\n\n` +
+    `🚀 *Pro* — ₹499/month\n• 500 messages/day\n• Everything in Free +\n• Calendar & Expenses\n• Voice notes\n• Price alerts\n• GST filing assistant\n• Lead CRM\n• All AI models\n• Priority support\n\n` +
     `🏢 *Business* — ₹2,999/month\n• Unlimited messages\n• Everything in Pro +\n• Team features\n• Follow-up automation\n• SLA support\n\n` +
     `💳 *Pay instantly via UPI/Card:*\n` +
     `🚀 Pro (₹499): ${proLink}\n` +
@@ -111,38 +105,32 @@ function helpMessage(plan) {
     `*📧 Email*\n"Send an email to john@acme.com about project delay"\n\n` +
     `*💬 Chat*\n"What's the capital of France?" / "Write a tweet about AI"\n\n` +
     `*📝 Summarize*\n"Summarize: [paste meeting notes]"\n\n` +
+    `*✅ Tasks*\n"Add task: Call Rahul tomorrow" / "Show my tasks" / "Done task 1"\n\n` +
     (isPro ? `*📅 Calendar*\n"Show my meetings" / "Add standup tomorrow 10am"\n\n` : '') +
     (isPro ? `*💰 Expenses*\n"I spent ₹450 on lunch" / "Show my expenses"\n\n` : '') +
+    (isPro ? `*🧾 GST*\n"GST summary" / "Help me file GST this month"\n\n` : '') +
     (isPro ? `*🔔 Price Alerts*\n"Alert me when iPhone drops below ₹60000"\n\n` : '') +
     (isPro ? `*🧠 Memory*\n"Remember my boss email is john@acme.com"\n\n` : '') +
     (isPro ? `*☀️ Briefing*\n"/briefing" — Get your daily summary\n\n` : '') +
-    (plan === 'business' ? `*🎯 Leads*\n"Add lead: John from LinkedIn, email john@co.com"\n"Show my leads" / "Draft follow-up for John"\n\n` : '') +
+    (plan === 'business' ? `*🎯 Leads*\n"Add lead: John from LinkedIn"\n"Show my leads"\n\n` : '') +
     `*🌤️ Weather:* "Weather in Mumbai"\n` +
     `*📰 News:* "Latest news about AI startups"\n` +
-    `*🔍 Research:* "Research Tesla competitors"\n` +
     `*✈️ Flights:* "Flights Delhi to Mumbai tomorrow"\n` +
     `*🚂 Trains:* "Trains Mumbai to Pune Friday"\n` +
     `*🌍 Translate:* "Translate hello to Hindi"\n` +
-    `*💳 UPI:* Paste any UPI SMS to parse it\n` +
     `*🏏 Sports:* "India cricket score"\n` +
     `*📱 Social:* "Write LinkedIn post about my startup"\n` +
     `*🧮 EMI:* "EMI for ₹40L at 8.5% 20 years"\n` +
     `*⏰ Remind:* "Remind me daily at 7pm to call mom"\n` +
     `*🧾 Invoice:* "Invoice for Rahul ₹15,000 design work"\n` +
-    `*📄 Resume:* "Review my resume: [paste resume text]"\n` +
-    `*🤝 Contract:* "Write a freelance contract for web design ₹50,000"\n` +
     `*🏦 Gold Price:* "What's today's gold price?"\n` +
-    `*🚂 Train Status:* "Check train status 12951"\n` +
-    `*📦 Track Order:* "Track my Amazon order 403-1234567"\n` +
-    `*💳 UPI History:* Paste multiple UPI SMS messages for summary\n` +
-    `*📞 Transcribe:* Send a voice note of your meeting → summary\n\n` +
-    `*/plan* — View your plan\n*/upgrade* — See pricing\n*/setmodel* — Switch AI model (Groq/Claude/GPT/Gemini)\n*/link [phone]* — Link your accounts across platforms\n*/help* — This message\n\n` +
-    (!isPro ? `⭐ Type */upgrade* to unlock calendar, expenses, voice & more!` : `🎉 You have full Pro access!`);
+    `*💳 UPI:* Paste any UPI SMS to parse it\n\n` +
+    `*/plan* — View your plan\n*/upgrade* — See pricing\n*/setmodel* — Switch AI model\n*/briefing* — Daily summary\n*/help* — This message\n\n` +
+    (!isPro ? `⭐ Type */upgrade* to unlock calendar, expenses, GST & more!` : `🎉 You have full Pro access!`);
 }
 
 // ── MAIN PROCESSOR ────────────────────────────────────────────────────────────
 async function processMessage(platformId, platform, messageText, userName = '', audioBase64 = null) {
-  // Get/create user
   const user = await db.getOrCreateUser(platformId, platform, userName);
   const p = getPending(user.id || platformId);
 
@@ -150,43 +138,35 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   if (!db.canAccessPlatform(platform, user.plan)) {
     return `🔒 *WhatsApp & Discord access requires Pro or Business plan!*\n\n` +
       `You're currently on the *FREE* plan.\n\n` +
-      `💳 Upgrade now to use GamaClaw on WhatsApp & Discord:\n` +
       `👉 Message us on Telegram @GamaClawBot and type */upgrade*\n\n` +
-      `🚀 *Pro* — ₹499/month — 500 messages/day\n` +
-      `🏢 *Business* — ₹2,999/month — Unlimited messages`;
+      `🚀 *Pro* — ₹499/month\n🏢 *Business* — ₹2,999/month`;
   }
 
-  // Check limits
   const limitCheck = await db.checkLimit(user);
   if (!limitCheck.allowed) {
-    return `⛔ You've used all *${limitCheck.limit}* messages for today on the *${limitCheck.plan}* plan.\n\n` +
-      `Resets at midnight! ${upgradeMessage(limitCheck.plan)}`;
+    return `⛔ You've used all *${limitCheck.limit}* messages for today on the *${limitCheck.plan}* plan.\n\nResets at midnight! ${upgradeMessage(limitCheck.plan)}`;
   }
 
   let text = messageText?.trim() || '';
 
-  // ── VOICE NOTE ──────────────────────────────────────────────────────────────
+  // ── VOICE NOTE ────────────────────────────────────────────────────────────
   if (audioBase64) {
     if (!db.PLAN_LIMITS[user.plan]?.features.includes('voice')) {
       return `🎤 Voice notes are a *Pro feature*!${upgradeMessage(user.plan)}`;
     }
     try {
-      const transcription = await ai.transcribeAndDetect(audioBase64);
-      text = transcription;
+      text = await ai.transcribeAndDetect(audioBase64);
     } catch {
       return '❌ Could not process voice note. Please try again.';
     }
   }
 
-  // ── COMMANDS ─────────────────────────────────────────────────────────────────
-
+  // ── COMMANDS ──────────────────────────────────────────────────────────────
   if (text === '/start') {
     const earlyAdopterMsg = user.is_early_adopter
       ? `\n\n🎖️ *You're one of our first 100 users!*\nYou get *FREE Pro access for 1 month* — enjoy all features on us! 🎉`
       : '';
-    return `👋 *Welcome to GamaClaw, ${userName || 'there'}!*\n\n` +
-      `I'm your 24/7 AI personal assistant.` + earlyAdopterMsg + `\n\n` +
-      helpMessage(user.plan);
+    return `👋 *Welcome to GamaClaw, ${userName || 'there'}!*\n\nI'm your 24/7 AI personal assistant.` + earlyAdopterMsg + `\n\n` + helpMessage(user.plan);
   }
 
   if (text === '/help') return helpMessage(user.plan);
@@ -200,18 +180,16 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     return await handleBriefing(user);
   }
 
-  // ── SETMODEL COMMAND ──────────────────────────────────────────────────────
+  // ── SETMODEL ──────────────────────────────────────────────────────────────
   if (text.startsWith('/setmodel')) {
     const arg = text.replace('/setmodel', '').trim().toLowerCase();
-    const allowed = db.MODEL_PLAN_ACCESS ? db.MODEL_PLAN_ACCESS[user.plan] || ['groq'] : ['groq'];
+    const allowed = db.MODEL_PLAN_ACCESS?.[user.plan] || ['groq'];
     const models = db.AVAILABLE_MODELS || {
       groq:   { label: 'Groq (Llama 3) — Fast & Free' },
       claude: { label: 'Claude (Anthropic) — Smart' },
       gpt:    { label: 'GPT-4o (OpenAI) — Powerful' },
       gemini: { label: 'Gemini (Google) — Multimodal' },
     };
-
-    // No argument → show model menu
     if (!arg) {
       let current = 'groq';
       try { current = await db.getUserModel(user.id); } catch {}
@@ -219,127 +197,77 @@ async function processMessage(platformId, platform, messageText, userName = '', 
         const isAllowed = allowed.includes(key);
         const isCurrent = key === current;
         return `${isCurrent ? '✅' : isAllowed ? '◻️' : '🔒'} *${key}* — ${info.label}` +
-          (!isAllowed ? ' _(Pro required)_' : '') +
-          (isCurrent ? ' ← current' : '');
+          (!isAllowed ? ' _(Pro required)_' : '') + (isCurrent ? ' ← current' : '');
       });
-      return `🤖 *Choose your AI Model*\n\n${lines.join('\n')}\n\n` +
-        `Usage: */setmodel [name]*\nExample: \`/setmodel claude\`\n\n` +
-        (!allowed.includes('claude') ? `⭐ Upgrade to Pro to unlock Claude, GPT-4o & Gemini!` : '');
+      return `🤖 *Choose your AI Model*\n\n${lines.join('\n')}\n\nUsage: */setmodel [name]*\n` +
+        (!allowed.includes('claude') ? `\n⭐ Upgrade to Pro to unlock Claude, GPT-4o & Gemini!` : '');
     }
-
-    // Validate model name
-    if (!models[arg]) {
-      return `❌ Unknown model *${arg}*\n\nAvailable: ${Object.keys(models).join(', ')}\n\nTry: */setmodel groq*`;
-    }
-
-    // Check plan access
-    if (!allowed.includes(arg)) {
-      return `🔒 *${models[arg].label}* requires a Pro or Business plan.\n\n` +
-        `You're on *${user.plan.toUpperCase()}*.\n\n` +
-        `👉 Type */upgrade* to unlock all AI models!`;
-    }
-
-    // Save the model
+    if (!models[arg]) return `❌ Unknown model *${arg}*. Available: ${Object.keys(models).join(', ')}`;
+    if (!allowed.includes(arg)) return `🔒 *${models[arg].label}* requires Pro.\n\n👉 Type */upgrade*`;
     try { await db.setUserModel(user.id, arg); } catch {}
-    return `✅ *AI Model updated!*\n\n🤖 Now using: *${models[arg].label}*\n\nAll your messages will now use this model.\nSwitch anytime with */setmodel*`;
+    return `✅ *AI Model updated to ${models[arg].label}!*\n\nSwitch anytime with */setmodel*`;
   }
 
-  // ── LINK PHONE COMMAND ────────────────────────────────────────────────────
+  // ── LINK PHONE ────────────────────────────────────────────────────────────
   if (text.startsWith('/link')) {
     const phone = text.replace('/link', '').trim().replace(/\s/g, '');
-    if (!phone) {
-      return `📱 *Link your accounts across platforms!*\n\n` +
-        `This syncs your plan across Telegram, WhatsApp & Discord.\n\n` +
-        `Usage: */link +91XXXXXXXXXX*\n\n` +
-        `Example: \`/link +919876543210\``;
-    }
-    if (!/^\+?[0-9]{10,15}$/.test(phone)) {
-      return `❌ Invalid phone number. Use format: */link +91XXXXXXXXXX*`;
-    }
+    if (!phone) return `📱 *Link accounts!*\n\nUsage: */link +91XXXXXXXXXX*`;
+    if (!/^\+?[0-9]{10,15}$/.test(phone)) return `❌ Invalid number. Use: */link +91XXXXXXXXXX*`;
     try {
       const result = await db.linkPhone(user.id, phone);
-      if (result.linked && result.plan) {
-        return `✅ *Accounts linked successfully!*\n\n` +
-          `📱 Phone: ${phone}\n` +
-          `🚀 Plan synced: *${result.plan.toUpperCase()}*\n\n` +
-          `Your plan is now active across all platforms!`;
-      }
-      return `✅ *Phone number saved!*\n\n` +
-        `📱 ${phone} linked to your account.\n\n` +
-        `When you sign in on another platform with the same number, your plan will sync automatically!`;
-    } catch (e) {
-      return `❌ Could not link phone number. Please try again.`;
-    }
+      if (result.linked && result.plan) return `✅ *Linked!*\n\n📱 ${phone}\n🚀 Plan: *${result.plan.toUpperCase()}*`;
+      return `✅ *Phone saved!*\n\n📱 ${phone} linked.`;
+    } catch { return `❌ Could not link. Try again.`; }
   }
 
-  // ── AUTO DETECT PHONE NUMBER ──────────────────────────────────────────────
+  // ── AUTO DETECT PHONE ─────────────────────────────────────────────────────
   const phoneMatch = text.match(/^(\+?[0-9]{10,13})$/);
   if (phoneMatch) {
     const phone = phoneMatch[1].startsWith('+') ? phoneMatch[1] : '+91' + phoneMatch[1];
-    try {
-      await db.linkPhone(user.id, phone);
-      return `✅ *Phone number linked!*\n\n📱 ${phone}\n\nYour account is now connected across all platforms! 🎉`;
-    } catch {
-      return `❌ Could not link. Try: */link +91XXXXXXXXXX*`;
-    }
+    try { await db.linkPhone(user.id, phone); return `✅ *Phone linked!*\n\n📱 ${phone} 🎉`; }
+    catch { return `❌ Could not link. Try: */link +91XXXXXXXXXX*`; }
   }
 
-  // ── CONNECT COMMAND (link dashboard account) ──────────────────────────────
+  // ── CONNECT ───────────────────────────────────────────────────────────────
   if (text.startsWith('/connect')) {
     const code = text.replace('/connect', '').trim();
-    if (!code || code.length !== 6) {
-      return `🔗 *Link your dashboard account!*\n\nUsage: */connect 123456*\n\nGet your code from *gamaclaw.vercel.app/dashboard*`;
-    }
+    if (!code || code.length !== 6) return `🔗 Usage: */connect 123456*\n\nGet code from *gamaclaw.vercel.app/dashboard*`;
     try {
       const result = await db.claimLinkingCode(platformId, platform, code);
-      if (result.success) {
-        return `✅ *Account linked successfully!*\n\n🌐 Your dashboard is now connected!\nVisit: gamaclaw.vercel.app/dashboard`;
-      } else if (result.reason === 'expired') {
-        return `⏱ Code expired! Generate a new one at *gamaclaw.vercel.app/dashboard*`;
-      } else {
-        return `❌ Invalid code. Get a new one at *gamaclaw.vercel.app/dashboard*`;
-      }
-    } catch {
-      return `❌ Could not link. Please try again.`;
-    }
+      if (result.success) return `✅ *Dashboard linked!*\n\n🌐 gamaclaw.vercel.app/dashboard`;
+      if (result.reason === 'expired') return `⏱ Code expired! Get a new one from dashboard.`;
+      return `❌ Invalid code.`;
+    } catch { return `❌ Could not link. Try again.`; }
   }
 
   // ── PENDING EMAIL CONFIRM ─────────────────────────────────────────────────
   const pendingEmail = await loadPendingEmail(user.id || platformId);
   if (pendingEmail) {
     const t = text.toLowerCase().trim();
-    const isSend = ['send','yes','ok','okay','confirm','y','sure','haan','kar do',
-                    'bhej do','send karo'].some(w => t === w) ||
-                   t.includes('send it') || t.includes('send now') ||
-                   t.includes('go ahead') || t.includes('yes send') ||
-                   t.includes('bhej') || t.includes('kar do');
+    const isSend = ['send','yes','ok','okay','confirm','y','sure','haan','kar do','bhej do','send karo'].some(w => t === w) ||
+                   ['send it','send now','go ahead','yes send','bhej'].some(w => t.includes(w));
     const isCancel = ['cancel','no','nahi','mat bhejo','stop','dont send'].some(w => t === w);
-    const isEdit = t === 'edit' || t === 'change' || t === 'redo' || t.includes('edit');
+    const isEdit = ['edit','change','redo'].includes(t) || t.includes('edit');
 
     if (isSend) {
       try {
         await emailSvc.sendEmail(pendingEmail.to, pendingEmail.subject, pendingEmail.body);
         await clearPendingEmail(user.id || platformId);
-        return `✅ *Email sent successfully!*\n\n📧 To: ${pendingEmail.to}\n📝 Subject: ${pendingEmail.subject}\n\n_Delivered via GamaClaw 🦀_`;
-      } catch (e) {
-        await clearPendingEmail(user.id || platformId);
-        return `❌ Failed to send: ${e.message}`;
-      }
+        return `✅ *Email sent!*\n\n📧 To: ${pendingEmail.to}\n📝 ${pendingEmail.subject}\n\n_Delivered via GamaClaw 🦀_`;
+      } catch (e) { await clearPendingEmail(user.id || platformId); return `❌ Failed: ${e.message}`; }
     } else if (isCancel) {
       await clearPendingEmail(user.id || platformId);
       return '❌ Email cancelled.';
     } else if (isEdit) {
       await clearPendingEmail(user.id || platformId);
-      return '✏️ Tell me what changes you want and I\'ll redraft it.';
+      return '✏️ Tell me what changes you want.';
     } else {
-      return `📧 *You have an unsent email!*\n\n*To:* ${pendingEmail.to}\n*Subject:* ${pendingEmail.subject}\n\nReply *send* ✅ or *cancel* ❌`;
+      return `📧 *Unsent email waiting!*\n\n*To:* ${pendingEmail.to}\n*Subject:* ${pendingEmail.subject}\n\nReply *send* ✅ or *cancel* ❌`;
     }
   }
 
-  // ── PENDING EMAIL ADDRESS ────────────────────────────────────────────────
   if (p.awaitingEmailAddress) {
-    const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
-    const match = text.match(emailRegex);
+    const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
     if (match) {
       p.pendingEmail.to = match[0];
       p.awaitingEmailAddress = false;
@@ -350,19 +278,23 @@ async function processMessage(platformId, platform, messageText, userName = '', 
 
   await db.incrementMessageCount(user);
 
-  // ── LOAD USER MODEL ───────────────────────────────────────────────────────
   let userModel = 'groq';
   try { userModel = await db.getUserModel(user.id || platformId); } catch {}
 
   // ── INTENT DETECTION ──────────────────────────────────────────────────────
-  const VALID_INTENTS = ['SEND_EMAIL','READ_CALENDAR','ADD_CALENDAR','SUMMARIZE',
+  const VALID_INTENTS = [
+    'SEND_EMAIL','READ_CALENDAR','ADD_CALENDAR','SUMMARIZE',
     'LOG_EXPENSE','VIEW_EXPENSES','ADD_PRICE_ALERT','VIEW_PRICE_ALERTS','SAVE_MEMORY',
     'MORNING_BRIEFING','ADD_LEAD','VIEW_LEADS','DRAFT_FOLLOWUP','VOICE_NOTE',
     'UPGRADE_PLAN','VIEW_PLAN','HELP','WEATHER','NEWS','WEB_SEARCH','SET_REMINDER',
     'VIEW_REMINDERS','INVOICE','FLIGHT_SEARCH','TRAIN_SEARCH','TRANSLATE','UPI_PARSE',
     'UPI_HISTORY','SPORTS_SCORE','SOCIAL_POST','EMI_CALC','REVIEW_RESUME',
-    'WRITE_CONTRACT','COMMODITY_PRICE','TRAIN_STATUS','TRACK_ORDER',
-    'TRANSCRIBE_MEETING','CHAT'];
+    'WRITE_CONTRACT','COMMODITY_PRICE','TRAIN_STATUS','TRACK_ORDER','TRANSCRIBE_MEETING',
+    'ADD_TASK','VIEW_TASKS','COMPLETE_TASK','DELETE_TASK',
+    'GST_FILING','GST_SUMMARY',
+    'CHAT'
+  ];
+
   let rawIntent = 'CHAT';
   try { rawIntent = await ai.detectIntent(text); } catch {}
   const intent = VALID_INTENTS.includes(rawIntent.trim().toUpperCase())
@@ -375,40 +307,30 @@ async function processMessage(platformId, platform, messageText, userName = '', 
 
     case 'SEND_EMAIL': {
       const draft = await ai.draftEmail(text, memoryCtx);
-      if (!draft) return '❌ Could not draft email. Try: "Send email to john@gmail.com about meeting"';
+      if (!draft) return '❌ Try: "Send email to john@gmail.com about meeting"';
       await savePendingEmail(user.id || platformId, draft);
       if (!draft.to) {
         p.awaitingEmailAddress = true;
-        return `📧 *Email Draft Ready!*\n\n*Subject:* ${draft.subject}\n\n*Body:*\n${draft.body}\n\n❓ Who should I send this to? Reply with the email address.`;
+        return `📧 *Email Draft Ready!*\n\n*Subject:* ${draft.subject}\n\n${draft.body}\n\n❓ Who should I send this to?`;
       }
       p.awaitingEmailConfirm = true;
       return formatEmailPreview(draft);
     }
 
     case 'READ_CALENDAR': {
-      if (!db.PLAN_LIMITS[user.plan]?.features.includes('calendar')) {
-        return `📅 Calendar is a *Pro feature*!${upgradeMessage(user.plan)}`;
-      }
-      try {
-        const events = await calendarSvc.getUpcomingEvents(7);
-        return calendarSvc.formatEvents(events);
-      } catch (e) {
-        return `❌ Calendar error: ${e.message}`;
-      }
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('calendar')) return `📅 Calendar is a *Pro feature*!${upgradeMessage(user.plan)}`;
+      try { return calendarSvc.formatEvents(await calendarSvc.getUpcomingEvents(7)); }
+      catch (e) { return `❌ Calendar error: ${e.message}`; }
     }
 
     case 'ADD_CALENDAR': {
-      if (!db.PLAN_LIMITS[user.plan]?.features.includes('calendar')) {
-        return `📅 Calendar is a *Pro feature*!${upgradeMessage(user.plan)}`;
-      }
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('calendar')) return `📅 Calendar is a *Pro feature*!${upgradeMessage(user.plan)}`;
       const event = await ai.extractEventDetails(text);
-      if (!event) return '❌ Could not understand the event. Try: "Add meeting with John tomorrow at 3pm for 1 hour"';
+      if (!event) return '❌ Try: "Add meeting with John tomorrow at 3pm"';
       try {
         await calendarSvc.addEvent(event.title, event.date, event.time, event.duration, event.description);
-        return `✅ *Event Added!*\n\n📌 ${event.title}\n📅 ${event.date} at ${event.time || '09:00'}\n⏱ ${event.duration} minutes`;
-      } catch (e) {
-        return `❌ Calendar error: ${e.message}`;
-      }
+        return `✅ *Event Added!*\n\n📌 ${event.title}\n📅 ${event.date} at ${event.time || '09:00'}`;
+      } catch (e) { return `❌ Calendar error: ${e.message}`; }
     }
 
     case 'SUMMARIZE': {
@@ -419,128 +341,98 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     }
 
     case 'LOG_EXPENSE': {
-      if (!db.PLAN_LIMITS[user.plan]?.features.includes('expense')) {
-        return `💰 Expense tracking is a *Pro feature*!${upgradeMessage(user.plan)}`;
-      }
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('expense')) return `💰 Expense tracking is a *Pro feature*!${upgradeMessage(user.plan)}`;
       const exp = await ai.extractExpense(text);
-      if (!exp) return '❌ Could not extract expense. Try: "I spent ₹450 on lunch"';
+      if (!exp) return '❌ Try: "I spent ₹450 on lunch"';
       await db.logExpense(user.id || platformId, exp.amount, exp.category, exp.note);
       return `✅ *Expense Logged!*\n\n💰 ₹${Number(exp.amount).toLocaleString('en-IN')}\n📂 ${exp.category}\n📝 ${exp.note}`;
     }
 
     case 'VIEW_EXPENSES': {
-      if (!db.PLAN_LIMITS[user.plan]?.features.includes('expense')) {
-        return `💰 Expense tracking is a *Pro feature*!${upgradeMessage(user.plan)}`;
-      }
-      const expenses = await db.getExpenseSummary(user.id || platformId, 30);
-      return await ai.summarizeExpenses(expenses);
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('expense')) return `💰 Expense tracking is a *Pro feature*!${upgradeMessage(user.plan)}`;
+      return await ai.summarizeExpenses(await db.getExpenseSummary(user.id || platformId, 30));
     }
 
     case 'ADD_PRICE_ALERT': {
-      if (!db.PLAN_LIMITS[user.plan]?.features.includes('price_alert')) {
-        return `🔔 Price alerts are a *Pro feature*!${upgradeMessage(user.plan)}`;
-      }
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('price_alert')) return `🔔 Price alerts are a *Pro feature*!${upgradeMessage(user.plan)}`;
       const alert = await ai.extractPriceAlert(text);
-      if (!alert) return '❌ Could not understand. Try: "Alert me when iPhone 15 drops below ₹60000"';
+      if (!alert) return '❌ Try: "Alert me when iPhone drops below ₹60000"';
       await db.addPriceAlert(user.id || platformId, alert.item, alert.target_price, '');
       return `✅ *Price Alert Set!*\n\n🔔 ${alert.item}\n💰 Alert when below ₹${Number(alert.target_price).toLocaleString('en-IN')}`;
     }
 
     case 'VIEW_PRICE_ALERTS': {
-    const alerts = await db.getActivePriceAlerts(user.id || platformId);
-    if (!alerts.length) return '🔔 No active price alerts.';
-  
-   // Check if user wants to remove an alert
-   const num = text.match(/\d+/);
-  if (num && (text.toLowerCase().includes('remove') || text.toLowerCase().includes('delete') || text.toLowerCase().includes('cancel'))) {
-    const idx = parseInt(num[0]) - 1;
-    if (alerts[idx]) {
-      await db.supabase.from('price_alerts').update({ active: false }).eq('id', alerts[idx].id);
-      return `✅ *Price alert removed!*\n\n~~${alerts[idx].item}~~ deleted.`;
+      const alerts = await db.getActivePriceAlerts(user.id || platformId);
+      if (!alerts.length) return '🔔 No active price alerts.\n\nSay "Alert me when [product] drops below ₹[price]"';
+      // Check if user wants to remove an alert
+      const num = text.match(/\d+/);
+      const wantsRemove = num && (text.toLowerCase().includes('remove') || text.toLowerCase().includes('delete') || text.toLowerCase().includes('cancel'));
+      if (wantsRemove) {
+        const idx = parseInt(num[0]) - 1;
+        if (alerts[idx]) {
+          await db.supabase.from('price_alerts').update({ active: false }).eq('id', alerts[idx].id);
+          return `✅ *Price alert removed!*\n\n🗑️ "${alerts[idx].item}" deleted.`;
+        }
+        return `❌ Alert ${num[0]} not found.`;
+      }
+      return `🔔 *Your Price Alerts:*\n\n` +
+        alerts.map((a, i) => `${i+1}. ${a.item} — below ₹${Number(a.target_price).toLocaleString('en-IN')}`).join('\n') +
+        `\n\nSay "Remove alert 1" to delete.`;
     }
-  }
-  
-  return `🔔 *Your Price Alerts:*\n\n` + 
-    alerts.map((a, i) => `${i+1}. ${a.item} — below ₹${Number(a.target_price).toLocaleString('en-IN')}`).join('\n') +
-    `\n\nSay "Remove alert 1" to delete.`;
-}
 
     case 'SAVE_MEMORY': {
-      if (!db.PLAN_LIMITS[user.plan]?.features.includes('memory')) {
-        return `🧠 Memory is a *Pro feature*!${upgradeMessage(user.plan)}`;
-      }
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('memory')) return `🧠 Memory is a *Pro feature*!${upgradeMessage(user.plan)}`;
       const mem = await ai.extractMemory(text);
       if (!mem) return '❌ Could not understand what to remember.';
       await db.saveMemory(user.id || platformId, mem.key, mem.value);
-      return `✅ *Saved to memory!*\n🧠 ${mem.key}: ${mem.value}`;
+      return `✅ *Saved!*\n🧠 ${mem.key}: ${mem.value}`;
     }
 
     case 'MORNING_BRIEFING': {
-      if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) {
-        return `☀️ Daily briefing is a *Pro feature*!${upgradeMessage(user.plan)}`;
-      }
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) return `☀️ Briefing is a *Pro feature*!${upgradeMessage(user.plan)}`;
       return await handleBriefing(user);
     }
 
     case 'ADD_LEAD': {
-      if (!db.PLAN_LIMITS[user.plan]?.features.includes('lead_followup')) {
-        return `🎯 Lead management is a *Business feature*!${upgradeMessage(user.plan)}`;
-      }
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('lead_followup')) return `🎯 Leads is a *Business feature*!${upgradeMessage(user.plan)}`;
       const lead = await ai.extractLead(text);
       if (!lead) return '❌ Try: "Add lead: Sarah from Instagram, email sarah@co.com"';
       await db.saveLead(user.id || platformId, lead.name, lead.email, lead.source, lead.notes);
-      return `✅ *Lead Added!*\n\n👤 ${lead.name}\n📧 ${lead.email || 'no email'}\n🔗 ${lead.source}\n📝 ${lead.notes}`;
+      return `✅ *Lead Added!*\n\n👤 ${lead.name}\n📧 ${lead.email || 'no email'}\n🔗 ${lead.source}`;
     }
 
     case 'VIEW_LEADS': {
-      if (!db.PLAN_LIMITS[user.plan]?.features.includes('lead_followup')) {
-        return `🎯 Lead management is a *Business feature*!${upgradeMessage(user.plan)}`;
-      }
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('lead_followup')) return `🎯 Leads is a *Business feature*!${upgradeMessage(user.plan)}`;
       const leads = await db.getLeads(user.id || platformId);
-      if (!leads.length) return '🎯 No leads yet. Say "Add lead: [name], [email], [source]"';
-      return `🎯 *Your Leads:*\n\n` + leads.slice(0, 10).map((l, i) =>
+      if (!leads.length) return '🎯 No leads yet.';
+      return `🎯 *Your Leads:*\n\n` + leads.slice(0,10).map((l,i) =>
         `${i+1}. *${l.name}* (${l.status})\n   📧 ${l.email || 'no email'} | 🔗 ${l.source}`
       ).join('\n\n');
     }
 
     case 'DRAFT_FOLLOWUP': {
-      if (!db.PLAN_LIMITS[user.plan]?.features.includes('lead_followup')) {
-        return `🎯 Follow-up drafting is a *Business feature*!${upgradeMessage(user.plan)}`;
-      }
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('lead_followup')) return `🎯 Follow-up is a *Business feature*!${upgradeMessage(user.plan)}`;
       const leads = await db.getLeads(user.id || platformId);
-      if (!leads.length) return '🎯 No leads found. Add a lead first!';
+      if (!leads.length) return '🎯 No leads found. Add one first!';
       const lead = leads[0];
       const followup = await ai.draftFollowUp(lead, memoryCtx);
       p.pendingEmail = { to: lead.email, subject: followup.subject, body: followup.body };
       p.awaitingEmailConfirm = true;
-      return `📧 *Follow-up Draft for ${lead.name}:*\n\n*To:* ${lead.email}\n*Subject:* ${followup.subject}\n\n${followup.body}\n\nReply *SEND* to send or *CANCEL* to discard.`;
+      return `📧 *Follow-up for ${lead.name}:*\n\n*To:* ${lead.email}\n*Subject:* ${followup.subject}\n\n${followup.body}\n\nReply *SEND* or *CANCEL*`;
     }
 
-    case 'UPGRADE_PLAN':
-      return await upgradeOptions(user.id, user.email || '', user.name || '');
-
-    case 'VIEW_PLAN':
-      return planInfo(user);
-
-    case 'HELP':
-      return helpMessage(user.plan);
-
-    case 'WEATHER':
-      return await ai.getWeather(text);
-
-    case 'NEWS':
-      return await ai.getNews(text);
-
-    case 'WEB_SEARCH':
-      return await ai.webSearch(text);
+    case 'UPGRADE_PLAN': return await upgradeOptions(user.id, user.email || '', user.name || '');
+    case 'VIEW_PLAN': return planInfo(user);
+    case 'HELP': return helpMessage(user.plan);
+    case 'WEATHER': return await ai.getWeather(text);
+    case 'NEWS': return await ai.getNews(text);
+    case 'WEB_SEARCH': return await ai.webSearch(text);
 
     case 'SET_REMINDER': {
       const tz = db.getTimezoneFromPhone(user.phone);
       const reminder = await ai.extractReminder(text, tz);
-      if (!reminder) return '❌ Try: "Remind me to take medicine daily at 9pm"';
-      try {
-        await db.saveReminder(user.id || platformId, reminder);
-      } catch (e) { console.error('Reminder save error:', e.message); }
+      if (!reminder) return '❌ Try: "Remind me daily at 9pm to check emails"';
+      try { await db.saveReminder(user.id || platformId, reminder); } catch (e) { console.error('Reminder save error:', e.message); }
       const recurText = reminder.recurring !== 'once' ? `\n🔄 ${reminder.recurring}` : '';
       const dateText = reminder.date ? `\n📅 ${reminder.date}` : '';
       return `⏰ *Reminder Set!*\n\n📝 ${reminder.text}\n🕐 ${reminder.time}${dateText}${recurText}`;
@@ -548,122 +440,117 @@ async function processMessage(platformId, platform, messageText, userName = '', 
 
     case 'VIEW_REMINDERS': {
       const reminders = await db.getReminders(user.id || platformId);
-      if (!reminders.length) return '⏰ No active reminders.\n\nSay "Remind me daily at 7pm to call mom" to add one!';
+      if (!reminders.length) return '⏰ No active reminders.\n\nSay "Remind me daily at 7pm to call mom"';
       return `⏰ *Your Reminders (${reminders.length}):*\n\n` +
-        reminders.map((r, i) => `${i+1}. *${r.text}*\n   🕐 ${r.time} · 🔄 ${r.recurring}`).join('\n\n');
+        reminders.map((r,i) => `${i+1}. *${r.text}*\n   🕐 ${r.time} · 🔄 ${r.recurring}`).join('\n\n');
+    }
+
+    // ── TASK TRACKING ─────────────────────────────────────────────────────
+    case 'ADD_TASK': {
+      const task = await ai.extractTask(text);
+      if (!task) return '❌ Try: "Add task: Call Rahul tomorrow"';
+      await db.saveTask(user.id || platformId, task.title, task.due_date, task.priority);
+      return `✅ *Task Added!*\n\n📋 ${task.title}${task.due_date ? `\n📅 Due: ${task.due_date}` : ''}${task.priority ? `\n🔥 Priority: ${task.priority}` : ''}`;
+    }
+
+    case 'VIEW_TASKS': {
+      const tasks = await db.getTasks(user.id || platformId);
+      if (!tasks.length) return `📋 *No pending tasks!*\n\nAdd one: "Add task: Call client tomorrow"`;
+      const taskList = tasks.map((t,i) =>
+        `${i+1}. ${t.priority === 'high' ? '🔥' : t.priority === 'medium' ? '📌' : '📋'} *${t.title}*${t.due_date ? `\n   📅 ${t.due_date}` : ''}`
+      ).join('\n\n');
+      return `📋 *Your Tasks (${tasks.length}):*\n\n${taskList}\n\nSay "Done task 1" or "Delete task 2"`;
+    }
+
+    case 'COMPLETE_TASK': {
+      const num = text.match(/\d+/);
+      if (!num) return '❌ Say: "Done task 1"';
+      const tasks = await db.getTasks(user.id || platformId);
+      const idx = parseInt(num[0]) - 1;
+      if (!tasks[idx]) return `❌ Task ${num[0]} not found.`;
+      await db.completeTask(tasks[idx].id);
+      return `✅ *Done!*\n\n~~${tasks[idx].title}~~ ✓\n\nGreat work! 🎉`;
+    }
+
+    case 'DELETE_TASK': {
+      const num = text.match(/\d+/);
+      if (!num) return '❌ Say: "Delete task 1"';
+      const tasks = await db.getTasks(user.id || platformId);
+      const idx = parseInt(num[0]) - 1;
+      if (!tasks[idx]) return `❌ Task ${num[0]} not found.`;
+      await db.deleteTask(tasks[idx].id);
+      return `🗑️ *Deleted!*\n\n"${tasks[idx].title}" removed.`;
+    }
+
+    // ── GST FILING ────────────────────────────────────────────────────────
+    case 'GST_FILING': {
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('expense')) return `🧾 GST Filing is a *Pro feature*!${upgradeMessage(user.plan)}`;
+      const expenses = await db.getExpenseSummary(user.id || platformId, 30);
+      return await ai.generateGSTFiling(text, expenses, memoryCtx);
+    }
+
+    case 'GST_SUMMARY': {
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('expense')) return `🧾 GST Summary is a *Pro feature*!${upgradeMessage(user.plan)}`;
+      const expenses = await db.getExpenseSummary(user.id || platformId, 30);
+      return await ai.generateGSTSummary(expenses);
     }
 
     case 'INVOICE': {
-      if (!db.PLAN_LIMITS[user.plan]?.features.includes('email')) {
-        return `📊 Invoice generation is a *Pro feature*!${upgradeMessage(user.plan)}`;
-      }
       const invoiceDetails = await ai.extractInvoiceDetails(text);
-      if (!invoiceDetails) return '❌ Try: "Generate invoice for Rahul ₹15,000 for web design"';
+      if (!invoiceDetails) return '❌ Try: "Invoice for Rahul ₹15,000 for web design"';
       const invoiceText = await ai.generateInvoiceText(invoiceDetails);
       if (invoiceDetails.client_email) {
         p.pendingEmail = { to: invoiceDetails.client_email, subject: `Invoice ${invoiceDetails.invoice_number}`, body: invoiceText.replace(/[*_]/g, '') };
         p.awaitingEmailConfirm = true;
-        return `${invoiceText}\n\nReply *SEND* to email this to ${invoiceDetails.client_email} or *CANCEL* to skip.`;
+        return `${invoiceText}\n\nReply *SEND* to email or *CANCEL* to skip.`;
       }
       return invoiceText;
     }
 
-    case 'FLIGHT_SEARCH':
-      return await ai.searchFlights(text);
-
-    case 'TRAIN_SEARCH':
-      return await ai.searchTrains(text);
-
-    case 'TRANSLATE':
-      return await ai.translateText(text);
-
-    case 'UPI_PARSE': {
-      const upiResult = await ai.parseUPIMessage(text);
-      p.lastUPIAmount = upiResult;
-      return upiResult;
-    }
-
-    case 'SPORTS_SCORE':
-      return await ai.getSportsScore(text);
-
-    case 'SOCIAL_POST':
-      return await ai.writeSocialPost(text);
-
-    case 'EMI_CALC':
-      return await ai.calculateEMI(text);
-
-    case 'REVIEW_RESUME':
-      return await ai.reviewResume(text);
-
-    case 'WRITE_CONTRACT':
-      return await ai.writeContract(text);
-
-    case 'COMMODITY_PRICE':
-      return await ai.getCommodityPrice(text);
-
-    case 'TRAIN_STATUS':
-      return await ai.checkTrainStatus(text);
-
-    case 'TRACK_ORDER':
-      return await ai.trackOrder(text);
-
-    case 'UPI_HISTORY':
-      return await ai.parseUPIHistory(text);
-
-    case 'TRANSCRIBE_MEETING':
-      return await ai.summarizeMeeting(text);
+    case 'FLIGHT_SEARCH': return await ai.searchFlights(text);
+    case 'TRAIN_SEARCH': return await ai.searchTrains(text);
+    case 'TRANSLATE': return await ai.translateText(text);
+    case 'UPI_PARSE': return await ai.parseUPIMessage(text);
+    case 'UPI_HISTORY': return await ai.parseUPIHistory(text);
+    case 'SPORTS_SCORE': return await ai.getSportsScore(text);
+    case 'SOCIAL_POST': return await ai.writeSocialPost(text);
+    case 'EMI_CALC': return await ai.calculateEMI(text);
+    case 'REVIEW_RESUME': return await ai.reviewResume(text);
+    case 'WRITE_CONTRACT': return await ai.writeContract(text);
+    case 'COMMODITY_PRICE': return await ai.getCommodityPrice(text);
+    case 'TRAIN_STATUS': return await ai.checkTrainStatus(text);
+    case 'TRACK_ORDER': return await ai.trackOrder(text);
+    case 'TRANSCRIBE_MEETING': return await ai.summarizeMeeting(text);
 
     default: {
       const lowerText = text.toLowerCase();
 
-      if (lowerText.includes('gst') || lowerText.includes('tax') && lowerText.includes('%')) {
+      // Image generation — not supported yet
+      if (lowerText.includes('image') || lowerText.includes('photo') || lowerText.includes('picture') ||
+          lowerText.includes('इमेज') || lowerText.includes('फोटो') || lowerText.includes('generate image')) {
+        return `🖼️ Image generation is not available yet in GamaClaw.\n\nI can help you with:\n• Writing descriptions\n• Finding information about the topic\n• Other tasks!\n\nWhat else can I help you with? 🦀`;
+      }
+
+      if (lowerText.includes('gst') || (lowerText.includes('tax') && lowerText.includes('%'))) {
         const result = await ai.calculateGST(text).catch(() => null);
-        if (result) {
-          await db.saveMessage(user.id || platformId, 'user', text);
-          await db.saveMessage(user.id || platformId, 'assistant', result);
-          return result;
-        }
+        if (result) { await db.saveMessage(user.id || platformId, 'user', text); await db.saveMessage(user.id || platformId, 'assistant', result); return result; }
       }
 
       if (lowerText.includes('sip') || (lowerText.includes('invest') && lowerText.includes('month') && lowerText.includes('year'))) {
         const result = await ai.calculateSIP(text).catch(() => null);
-        if (result) {
-          await db.saveMessage(user.id || platformId, 'user', text);
-          await db.saveMessage(user.id || platformId, 'assistant', result);
-          return result;
-        }
+        if (result) { await db.saveMessage(user.id || platformId, 'user', text); await db.saveMessage(user.id || platformId, 'assistant', result); return result; }
       }
 
-      if ((lowerText.includes('emi') || lowerText.includes('loan')) &&
-          (lowerText.includes('%') || lowerText.includes('percent') || lowerText.includes('lakh'))) {
+      if ((lowerText.includes('emi') || lowerText.includes('loan')) && (lowerText.includes('%') || lowerText.includes('lakh'))) {
         const result = await ai.calculateEMI(text).catch(() => null);
-        if (result && !result.includes('❌')) {
-          await db.saveMessage(user.id || platformId, 'user', text);
-          await db.saveMessage(user.id || platformId, 'assistant', result);
-          return result;
-        }
-      }
-
-      if (lowerText.includes('translate') || lowerText.includes('in hindi') ||
-          lowerText.includes('in english') || lowerText.includes('meaning of')) {
-        const result = await ai.translateText(text).catch(() => null);
-        if (result && !result.includes('❌')) {
-          await db.saveMessage(user.id || platformId, 'user', text);
-          await db.saveMessage(user.id || platformId, 'assistant', result);
-          return result;
-        }
+        if (result && !result.includes('❌')) { await db.saveMessage(user.id || platformId, 'user', text); await db.saveMessage(user.id || platformId, 'assistant', result); return result; }
       }
 
       if (lowerText.includes('weather') || lowerText.includes('temperature') || lowerText.includes('mausam')) {
         const result = await ai.getWeather(text).catch(() => null);
-        if (result && !result.includes('❌')) {
-          await db.saveMessage(user.id || platformId, 'user', text);
-          await db.saveMessage(user.id || platformId, 'assistant', result);
-          return result;
-        }
+        if (result && !result.includes('❌')) { await db.saveMessage(user.id || platformId, 'user', text); await db.saveMessage(user.id || platformId, 'assistant', result); return result; }
       }
 
-      // Pass userModel to ai.chat so it uses the user's preferred model
       const reply = await ai.chat(text, history, memoryCtx, userModel);
       await db.saveMessage(user.id || platformId, 'user', text);
       await db.saveMessage(user.id || platformId, 'assistant', reply);
@@ -674,38 +561,21 @@ async function processMessage(platformId, platform, messageText, userName = '', 
 }
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
-
 function formatEmailPreview(draft) {
   return `📧 *Email Draft Ready!*\n\n*To:* ${draft.to}\n*Subject:* ${draft.subject}\n\n*Body:*\n${draft.body}\n\n` +
-    `Reply *SEND* to send ✅\nReply *EDIT* to redraft ✏️\nReply *CANCEL* to cancel ❌`;
+    `Reply *SEND* ✅ · *EDIT* ✏️ · *CANCEL* ❌`;
 }
 
 async function handleBriefing(user) {
   try {
-    // Try calendar but don't crash if not connected
     let events = [];
-    try {
-      events = await calendarSvc.getUpcomingEvents(1);
-    } catch {
-      events = [];
-    }
-
-    // Try expenses but don't crash if DB issue
+    try { events = await calendarSvc.getUpcomingEvents(1); } catch {}
     let expenses = [];
-    try {
-      expenses = await db.getExpenseSummary(user.id, 1);
-    } catch {
-      expenses = [];
-    }
-
+    try { expenses = await db.getExpenseSummary(user.id, 1); } catch {}
     const memCtx = await db.getMemoryString(user.id).catch(() => '');
     return await ai.generateBriefing(user.name, events, expenses, memCtx);
-  } catch (e) {
-    return `☀️ *Good morning, ${user.name || 'there'}!*\n\n` +
-      `Here's your GamaClaw briefing:\n\n` +
-      `📅 Calendar: Not connected yet\n` +
-      `💰 Expenses: No data yet\n\n` +
-      `_Connect Google Calendar via Render env vars to get full briefings!_`;
+  } catch {
+    return `☀️ *Good morning, ${user.name || 'there'}!*\n\n📅 Calendar: Not connected\n💰 Expenses: No data yet`;
   }
 }
 
