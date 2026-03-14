@@ -65,7 +65,7 @@ function upgradeMessage(plan) {
 function planInfo(user) {
   const limits = db.PLAN_LIMITS[user.plan];
   const earlyAdopterBadge = user.is_early_adopter ? '\n🎖️ *Early Adopter* — Free Pro for 1 month!' : '';
-  return `🦀 *Your GamaClaw Plan*\n\n` +
+  return ` *Your GamaClaw Plan*\n\n` +
     `Plan: *${user.plan.toUpperCase()}*\n` +
     `Messages today: *${user.messages_today || 0} / ${limits.daily}*` +
     earlyAdopterBadge + `\n\n` +
@@ -101,7 +101,7 @@ async function upgradeOptions(userId = null, userEmail = '', userName = '') {
 // ── HELP MESSAGE ──────────────────────────────────────────────────────────────
 function helpMessage(plan) {
   const isPro = plan === 'pro' || plan === 'business';
-  return `🦀 *GamaClaw — Your 24/7 AI Assistant*\n\n` +
+  return ` *GamaClaw — Your 24/7 AI Assistant*\n\n` +
     `*📧 Email*\n"Send an email to john@acme.com about project delay"\n\n` +
     `*💬 Chat*\n"What's the capital of France?" / "Write a tweet about AI"\n\n` +
     `*📝 Summarize*\n"Summarize: [paste meeting notes]"\n\n` +
@@ -269,7 +269,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       try {
         await emailSvc.sendEmail(pendingEmail.to, pendingEmail.subject, pendingEmail.body);
         await clearPendingEmail(user.id || platformId);
-        return `✅ *Email sent!*\n\n📧 To: ${pendingEmail.to}\n📝 ${pendingEmail.subject}\n\n_Delivered via GamaClaw 🦀_`;
+        return `✅ *Email sent!*\n\n📧 To: ${pendingEmail.to}\n📝 ${pendingEmail.subject}\n\n_Delivered via GamaClaw _`;
       } catch (e) { await clearPendingEmail(user.id || platformId); return `❌ Failed: ${e.message}`; }
     } else if (isCancel) {
       await clearPendingEmail(user.id || platformId);
@@ -311,7 +311,21 @@ async function processMessage(platformId, platform, messageText, userName = '', 
 
   let userModel = 'groq';
   try { userModel = await db.getUserModel(user.id || platformId); } catch {}
-
+  // ── MULTI-LINE EXPENSE DETECTION ─────────────────────────────────────────
+const expenseLines = text.split('\n').filter(l => 
+  /i spent|i paid|spent ₹|paid ₹/i.test(l)
+);
+if (expenseLines.length > 1) {
+  let results = [];
+  for (const line of expenseLines) {
+    const exp = await ai.extractExpense(line);
+    if (exp) {
+      await db.logExpense(user.id || platformId, exp.amount, exp.category, exp.note);
+      results.push(`✅ ₹${Number(exp.amount).toLocaleString('en-IN')} — ${exp.note}`);
+    }
+  }
+  if (results.length) return `💰 *${results.length} Expenses Logged!*\n\n${results.join('\n')}`;
+}
   // ── INTENT DETECTION ──────────────────────────────────────────────────────
   const VALID_INTENTS = [
     'SEND_EMAIL','READ_CALENDAR','ADD_CALENDAR','SUMMARIZE',
@@ -355,7 +369,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
        lowerCheck.includes('बनाओ') || lowerCheck.includes('जेनरेट') || lowerCheck.includes('बना दो')) &&
       (lowerCheck.includes('image') || lowerCheck.includes('photo') || lowerCheck.includes('picture') ||
        lowerCheck.includes('इमेज') || lowerCheck.includes('फोटो') || lowerCheck.includes('तस्वीर'))) {
-    return `🖼️ I can't generate images yet — that feature is coming soon!\n\nBut I can help you with:\n• Writing a description of what you want\n• Finding similar images online\n• Anything else!\n\nWhat else can I help you with? 🦀`;
+    return `🖼️ I can't generate images yet — that feature is coming soon!\n\nBut I can help you with:\n• Writing a description of what you want\n• Finding similar images online\n• Anything else!\n\nWhat else can I help you with? `;
   }
 
   // ── DELETE ALL REMINDERS (broader match) ────────────────────────────────
@@ -637,7 +651,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       // Image generation — not supported yet
       if (lowerText.includes('image') || lowerText.includes('photo') || lowerText.includes('picture') ||
           lowerText.includes('इमेज') || lowerText.includes('फोटो') || lowerText.includes('generate image')) {
-        return `🖼️ Image generation is not available yet in GamaClaw.\n\nI can help you with:\n• Writing descriptions\n• Finding information about the topic\n• Other tasks!\n\nWhat else can I help you with? 🦀`;
+        return `🖼️ Image generation is not available yet in GamaClaw.\n\nI can help you with:\n• Writing descriptions\n• Finding information about the topic\n• Other tasks!\n\nWhat else can I help you with? `;
       }
 
       if (lowerText.includes('gst') || (lowerText.includes('tax') && lowerText.includes('%'))) {

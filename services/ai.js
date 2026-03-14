@@ -10,17 +10,30 @@ async function askWithModel(prompt, model = 'groq', maxTokens = 1000) {
     default:       return await askGroq(prompt, maxTokens);
   }
 }
-
 async function askGroq(prompt, maxTokens = 1000) {
-  const completion = await groq.chat.completions.create({
-    messages: [{ role: 'user', content: prompt }],
-    model: 'llama-3.3-70b-versatile',
-    max_tokens: maxTokens,
-    temperature: 0.7,
-  });
-  return completion.choices[0]?.message?.content?.trim() || '';
+  try {
+    const completion = await groq.chat.completions.create({
+      messages: [{ role: 'user', content: prompt }],
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: maxTokens,
+      temperature: 0.7,
+    });
+    return completion.choices[0]?.message?.content?.trim() || '';
+  } catch (err) {
+    // If rate limited, try llama-3.1-8b-instant (different quota)
+    if (err.message?.includes('429') || err.message?.includes('rate limit')) {
+      console.log('⚠️ Groq rate limit hit, switching to backup model...');
+      const completion = await groq.chat.completions.create({
+        messages: [{ role: 'user', content: prompt }],
+        model: 'llama-3.1-8b-instant',
+        max_tokens: maxTokens,
+        temperature: 0.7,
+      });
+      return completion.choices[0]?.message?.content?.trim() || '';
+    }
+    throw err;
+  }
 }
-
 async function askClaude(prompt, maxTokens = 1000) {
   const fetch = require('node-fetch');
   const res = await fetch('https://api.anthropic.com/v1/messages', {
