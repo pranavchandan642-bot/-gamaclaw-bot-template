@@ -585,9 +585,11 @@ async function transcribeMeeting(audioBase64, mimeType = 'audio/ogg') {
     const { toFile } = require('groq-sdk');
     const audioBuffer = Buffer.from(audioBase64, 'base64');
     const transcription = await groq.audio.transcriptions.create({
-      file: await toFile(audioBuffer, 'audio.ogg', { type: mimeType }),
-      model: 'whisper-large-v3',
-    });
+    file: await toFile(audioBuffer, 'audio.ogg', { type: mimeType }),
+    model: 'whisper-large-v3',
+    language: 'en',  // Force English transcription
+    prompt: 'Transcribe in English. Convert city names and common words to English.',
+  });
     const text = transcription.text;
     const summary = await summarizeMeeting(text);
     return `📝 *Transcript:*\n${text}\n\n${summary}`;
