@@ -126,144 +126,6 @@ async function getOrCreateUser(platformId, platform, name = '') {
 function fallbackUser(platformId, platform, name, plan = 'free') {
   return { id: platformId, platform_id: platformId, platform, name, plan, messages_today: 0 };
 }
-function buildNextRun({ date = null, time, recurring = 'once', day_of_week = null, timezoneOffset = 5.5 }) {
-  const now = new Date();
-  const [hours, minutes] = (time || '09:00').split(':').map(Number);
-
-  function makeUtcDateFromLocalParts(year, month, day, h, m, offset) {
-    const utcMs = Date.UTC(year, month, day, h - offset, m, 0, 0);
-    return new Date(utcMs);
-  }
-
-  if (recurring === 'once' && date) {
-    const [y, mo, d] = date.split('-').map(Number);
-    return makeUtcDateFromLocalParts(y, mo - 1, d, hours, minutes, timezoneOffset).toISOString();
-  }
-
-  const localNow = new Date(now.getTime() + timezoneOffset * 60 * 60 * 1000);
-  const target = new Date(localNow);
-  target.setHours(hours, minutes, 0, 0);
-
-  if (recurring === 'daily') {
-    if (target <= localNow) target.setDate(target.getDate() + 1);
-  }
-
-  if (recurring === 'weekly') {
-    const days = {
-      sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
-      thursday: 4, friday: 5, saturday: 6,
-    };
-    const targetDay = days[(day_of_week || '').toLowerCase()] ?? 1;
-    const currentDay = target.getDay();
-    let diff = targetDay - currentDay;
-    if (diff < 0 || (diff === 0 && target <= localNow)) diff += 7;
-    target.setDate(target.getDate() + diff);
-  }
-
-  if (recurring === 'monthly') {
-    if (target <= localNow) target.setMonth(target.getMonth() + 1);
-  }
-
-  const utcTarget = new Date(target.getTime() - timezoneOffset * 60 * 60 * 1000);
-  return utcTarget.toISOString();
-}
-async function createScheduledMessage(userId, leadId, message, schedule, timezoneOffset = 5.5) {
-  const nextRunAt = buildNextRun({
-    date: schedule.date || null,
-    time: schedule.time,
-    recurring: schedule.recurring || 'once',
-    day_of_week: schedule.day_of_week || null,
-    timezoneOffset,
-  });
-
-  const { data, error } = await supabase
-    .from('scheduled_messages')
-    .insert({
-      user_id: userId,
-      lead_id: leadId,
-      channel: 'whatsapp',
-      message,
-      recurring: schedule.recurring || 'once',
-      date: schedule.date || null,
-      time: schedule.time,
-      day_of_week: schedule.day_of_week || null,
-      active: true,
-      next_run_at: nextRunAt,
-      created_at: new Date().toISOString(),
-    })
-    .select()
-    .single();
-
-  if (error) throw new Error(error.message);
-  return data;
-}
-async function getScheduledMessages(userId) {
-  const { data } = await supabase
-    .from('scheduled_messages')
-    .select(`
-      *,
-      leads (
-        id, name, phone, whatsapp_opted_in, active
-      )
-    `)
-    .eq('user_id', userId)
-    .eq('active', true)
-    .order('next_run_at', { ascending: true });
-
-  return data || [];
-}
-async function getDueScheduledMessages() {
-  const now = new Date().toISOString();
-
-  const { data } = await supabase
-    .from('scheduled_messages')
-    .select(`
-      *,
-      users (
-        id, plan, phone, platform, platform_id
-      ),
-      leads (
-        id, name, phone, whatsapp_opted_in, active
-      )
-    `)
-    .eq('active', true)
-    .lte('next_run_at', now);
-
-  return data || [];
-}
-async function markScheduledMessageSent(id, recurring, time, date, day_of_week, timezoneOffset = 5.5) {
-  const updates = {
-    last_sent_at: new Date().toISOString(),
-  };
-
-  if (recurring === 'once') {
-    updates.active = false;
-  } else {
-    updates.next_run_at = buildNextRun({
-      date,
-      time,
-      recurring,
-      day_of_week,
-      timezoneOffset,
-    });
-  }
-
-  const { error } = await supabase
-    .from('scheduled_messages')
-    .update(updates)
-    .eq('id', id);
-
-  if (error) throw new Error(error.message);
-}
-async function deactivateScheduledMessage(id, userId) {
-  const { error } = await supabase
-    .from('scheduled_messages')
-    .update({ active: false })
-    .eq('id', id)
-    .eq('user_id', userId);
-
-  if (error) throw new Error(error.message);
-}
 
 async function getEarlyAdopterCount() {
   const { count } = await supabase
@@ -427,49 +289,9 @@ async function getRecentMessages(userId, limit = 10) {
 
 // ── LEADS ─────────────────────────────────────────────────────────────────────
 
-async function updateLead(userId, leadId, updates) {
-  const { error } = await supabase
-    .from('leads')
-    .update(updates)
-    .eq('id', leadId)
-    .eq('user_id', userId);
-
-  if (error) throw new Error(error.message);
-}
-
-async function getLeadByName(userId, name) {
-  const { data } = await supabase
-    .from('leads')
-    .select('*')
-    .eq('user_id', userId)
-    .ilike('name', name)
-    .limit(1)
-    .single();
-
-  return data || null;
-}
-
-async function getLeadByPhone(userId, phone) {
-  const { data } = await supabase
-    .from('leads')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('phone', phone)
-    .limit(1)
-    .single();
-
-  return data || null;
-}
- async function saveLead(userId, name, email, source, notes, phone = null, whatsappOptedIn = false) {
+async function saveLead(userId, name, email, source, notes) {
   await supabase.from('leads').insert({
-    user_id: userId,
-    name,
-    email,
-    phone,
-    source,
-    notes,
-    whatsapp_opted_in: whatsappOptedIn,
-    status: 'new',
+    user_id: userId, name, email, source, notes, status: 'new',
     created_at: new Date().toISOString(),
   });
 }
@@ -664,6 +486,61 @@ async function completeTask(taskId) {
 async function deleteTask(taskId) {
   await supabase.from('tasks').delete().eq('id', taskId);
 }
+ // Scheduled Messages
+async function createScheduledMessage(userId, platform, toPhone, toName, message, recurring, dayOfWeek, sendTime) {
+  const { data, error } = await supabase
+    .from('scheduled_messages')
+    .insert([{
+      user_id: userId,
+      platform,
+      to_phone: toPhone,
+      to_name: toName,
+      message,
+      recurring,
+      day_of_week: dayOfWeek,
+      send_time: sendTime,
+      active: true
+    }])
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function getScheduledMessages(userId) {
+  const { data } = await supabase
+    .from('scheduled_messages')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('active', true)
+    .order('created_at', { ascending: false });
+  return data || [];
+}
+
+async function getDueScheduledMessages() {
+  const now = new Date().toISOString();
+  const { data } = await supabase
+    .from('scheduled_messages')
+    .select('*')
+    .eq('active', true)
+    .lte('next_run', now);
+  return data || [];
+}
+
+async function updateNextRun(id, nextRun) {
+  await supabase
+    .from('scheduled_messages')
+    .update({ next_run: nextRun })
+    .eq('id', id);
+}
+
+async function deleteScheduledMessage(userId, id) {
+  await supabase
+    .from('scheduled_messages')
+    .update({ active: false })
+    .eq('id', id)
+    .eq('user_id', userId);
+}
 
 // ── EXPORTS ───────────────────────────────────────────────────────────────────
 module.exports = {
@@ -675,6 +552,11 @@ module.exports = {
   MODEL_PLAN_ACCESS,
   getOrCreateUser,
   updateUser,
+  createScheduledMessage,
+  getScheduledMessages,
+  getDueScheduledMessages,
+  updateNextRun,
+  deleteScheduledMessage,
   linkPhone,
   upgradeAllLinkedAccounts,
   checkLimit,
@@ -697,15 +579,6 @@ module.exports = {
   saveMessage,
   getRecentMessages,
   saveLead,
-    updateLead,
-  getLeadByName,
-  getLeadByPhone,
-  createScheduledMessage,
-  getScheduledMessages,
-  getDueScheduledMessages,
-  markScheduledMessageSent,
-  deactivateScheduledMessage,
-  buildNextRun,
   getLeads,
   saveReminder,
   getReminders,

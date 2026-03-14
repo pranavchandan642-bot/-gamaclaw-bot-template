@@ -619,7 +619,62 @@ async function transcribeMeeting(audioBase64, mimeType = 'audio/ogg') {
     return '❌ Could not transcribe. Make sure it\'s a clear recording under 10MB.';
   }
 }
+ // ── EXTRACT SCHEDULED MESSAGE ─────────────────────────────────────────────────
+async function extractScheduledMessage(text) {
+  const prompt = `Extract scheduled message details from this text. Return ONLY valid JSON, nothing else — no explanation, no markdown, no backticks.
 
+Text: "${text}"
+
+Return this exact JSON structure:
+{
+  "toPhone": "919876543210",
+  "toName": "Rahul",
+  "message": "Hi, just checking in!",
+  "recurring": "weekly",
+  "dayOfWeek": "monday",
+  "sendTime": "10:00"
+}
+
+Rules:
+- toPhone: digits only, include country code (e.g. 919876543210 for India). If no country code given, assume 91.
+- toName: contact name if mentioned, else null
+- message: the actual message text to send (everything after the colon : or "saying" or "message:")
+- recurring: must be one of: once / daily / weekly / monthly
+- dayOfWeek: only fill if weekly (e.g. "monday"), else null
+- sendTime: 24hr format HH:MM (e.g. "10:00", "14:30")
+- If you cannot extract toPhone, message, or sendTime — return null
+
+Examples:
+"Schedule message to Rahul +919876543210 every Monday at 10am: Hi checking in!" 
+→ {"toPhone":"919876543210","toName":"Rahul","message":"Hi checking in!","recurring":"weekly","dayOfWeek":"monday","sendTime":"10:00"}
+
+"Send my client +917890123456 a reminder every day at 9am: Don't forget our meeting"
+→ {"toPhone":"917890123456","toName":null,"message":"Don't forget our meeting","recurring":"daily","dayOfWeek":null,"sendTime":"09:00"}`;
+
+  try {
+    const response = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 300,
+      temperature: 0,
+    });
+
+    const raw = response.choices[0].message.content.trim();
+    if (!raw || raw === 'null') return null;
+
+    // Strip any accidental markdown backticks
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+
+    // Validate required fields
+    if (!parsed.toPhone || !parsed.message || !parsed.sendTime) return null;
+
+    return parsed;
+  } catch (err) {
+    console.error('extractScheduledMessage error:', err.message);
+    return null;
+  }
+}
 module.exports = {
   askWithModel, askGroq, askClaude, askGPT, askGemini, ask, askJSON,
   detectIntent, draftEmail, extractEventDetails, extractExpense, summarizeExpenses,
@@ -629,6 +684,6 @@ module.exports = {
   generateInvoiceText, searchFlights, searchTrains, translateText,
   parseUPIMessage, parseUPIHistory, getSportsScore, writeSocialPost, calculateEMI,
   reviewResume, writeContract, getCommodityPrice, checkTrainStatus,
-  trackOrder, transcribeMeeting, calculateGST, calculateSIP,
+  trackOrder, transcribeMeeting, calculateGST, calculateSIP,extractScheduledMessage,
   extractTask, generateGSTFiling, generateGSTSummary,
 };

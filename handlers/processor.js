@@ -90,7 +90,7 @@ async function upgradeOptions(userId = null, userEmail = '', userName = '') {
   }
   return `⭐ *GamaClaw Plans*\n\n` +
     `🆓 *Free* — ₹0/month\n• 30 messages/day\n• Email, Tasks, Reminders\n• EMI, GST, SIP calculators\n• Weather, News, Translate\n\n` +
-    `🚀 *Pro* — ₹499/month\n• 500 messages/day\n• Everything in Free +\n• Calendar & Expenses\n• Voice notes\n• Price alerts\n• GST filing assistant\n• Lead CRM\n• All AI models\n• Priority support\n\n` +
+    `🚀 *Pro* — ₹499/month\n• 500 messages/day\n• Everything in Free +\n• Calendar & Expenses\n• Voice notes\n• Price alerts\n• GST filing assistant\n• Lead CRM\n• Scheduled Messages\n• All AI models\n• Priority support\n\n` +
     `🏢 *Business* — ₹2,999/month\n• Unlimited messages\n• Everything in Pro +\n• Team features\n• Follow-up automation\n• SLA support\n\n` +
     `💳 *Pay instantly via UPI/Card:*\n` +
     `🚀 Pro (₹499): ${proLink}\n` +
@@ -112,6 +112,7 @@ function helpMessage(plan) {
     (isPro ? `*🔔 Price Alerts*\n"Alert me when iPhone drops below ₹60000"\n\n` : '') +
     (isPro ? `*🧠 Memory*\n"Remember my boss email is john@acme.com"\n\n` : '') +
     (isPro ? `*☀️ Briefing*\n"/briefing" — Get your daily summary\n\n` : '') +
+    (isPro ? `*📅 Scheduled Messages*\n"Schedule message to Rahul +919876543210 every Monday at 10am: Hi, checking in!"\n"/schedules" — View all · "Cancel schedule 1"\n\n` : '') +
     (plan === 'business' ? `*🎯 Leads*\n"Add lead: John from LinkedIn"\n"Show my leads"\n\n` : '') +
     `*🌤️ Weather:* "Weather in Mumbai"\n` +
     `*📰 News:* "Latest news about AI startups"\n` +
@@ -125,7 +126,7 @@ function helpMessage(plan) {
     `*🧾 Invoice:* "Invoice for Rahul ₹15,000 design work"\n` +
     `*🏦 Gold Price:* "What's today's gold price?"\n` +
     `*💳 UPI:* Paste any UPI SMS to parse it\n\n` +
-    `*/plan* — View your plan\n*/upgrade* — See pricing\n*/setmodel* — Switch AI model\n*/briefing* — Daily summary\n*/help* — This message\n\n` +
+    `*/plan* — View your plan\n*/upgrade* — See pricing\n*/setmodel* — Switch AI model\n*/briefing* — Daily summary\n*/schedules* — Scheduled messages\n*/help* — This message\n\n` +
     (!isPro ? `⭐ Type */upgrade* to unlock calendar, expenses, GST & more!` : `🎉 You have full Pro access!`);
 }
 
@@ -148,13 +149,8 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   }
 
   let text = messageText?.trim() || '';
-
-  // ── STRIP SURROUNDING QUOTES ──────────────────────────────────────────────
-  // Users sometimes send "command" with quotes
   text = text.replace(/^["'""]|["'""]$/g, '').trim();
 
-  // ── NORMALIZE SETMODEL COMMAND ────────────────────────────────────────────
-  // Handle "setmodel gemini", "/set model claude", "set model groq" etc
   const setModelMatch = text.match(/^\/?\s*set\s*model\s*(.*)$/i);
   if (setModelMatch) {
     text = '/setmodel ' + setModelMatch[1].trim().toLowerCase();
@@ -251,6 +247,32 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     } catch { return `❌ Could not link. Try again.`; }
   }
 
+  // ── SCHEDULED MESSAGES COMMANDS ───────────────────────────────────────────
+  const lowerTextCmd = text.toLowerCase().trim();
+
+  // /schedules — list all
+  if (lowerTextCmd === '/schedules' || lowerTextCmd === 'my schedules' || lowerTextCmd === 'show schedules') {
+    if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) {
+      return `📅 Scheduled messages are a *Pro feature*!${upgradeMessage(user.plan)}`;
+    }
+    const msgs = await db.getScheduledMessages(user.id || platformId);
+    if (!msgs.length) return `📅 *No scheduled messages.*\n\nTry:\n"Schedule message to Rahul +919876543210 every Monday at 10am: Hi, checking in!"`;
+    const list = msgs.map((m, i) =>
+      `${i+1}. 👤 *${m.to_name || m.to_phone}*\n   💬 "${m.message.length > 40 ? m.message.slice(0,40)+'...' : m.message}"\n   🔄 ${m.recurring}${m.day_of_week ? ' · ' + m.day_of_week : ''} at ${m.send_time}`
+    ).join('\n\n');
+    return `📅 *Your Scheduled Messages (${msgs.length}):*\n\n${list}\n\nSay "Cancel schedule 1" to remove one.`;
+  }
+
+  // Cancel schedule N
+  const cancelMatch = lowerTextCmd.match(/^cancel schedule\s+(\d+)$/);
+  if (cancelMatch) {
+    const index = parseInt(cancelMatch[1]) - 1;
+    const msgs = await db.getScheduledMessages(user.id || platformId);
+    if (!msgs[index]) return `❌ Schedule ${cancelMatch[1]} not found. Type */schedules* to see your list.`;
+    await db.deleteScheduledMessage(user.id || platformId, msgs[index].id);
+    return `✅ Cancelled scheduled message to *${msgs[index].to_name || msgs[index].to_phone}*.`;
+  }
+
   // ── PENDING EMAIL CONFIRM ─────────────────────────────────────────────────
   const pendingEmail = await loadPendingEmail(user.id || platformId);
   if (pendingEmail) {
@@ -262,7 +284,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
 
     if (isSend) {
       if (!pendingEmail.to) {
-        // Still no recipient — ask for it
         p.awaitingEmailAddress = true;
         return `📧 Who should I send this email to? Please share their email address.`;
       }
@@ -278,7 +299,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       await clearPendingEmail(user.id || platformId);
       return '✏️ Sure! Tell me what changes you want and I\'ll redraft it.';
     } else {
-      // If user sends something completely unrelated — clear the pending email and process normally
       const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
       if (emailRegex.test(t) && p.awaitingEmailAddress) {
         const emailMatch = t.match(emailRegex);
@@ -287,10 +307,8 @@ async function processMessage(platformId, platform, messageText, userName = '', 
         p.awaitingEmailAddress = false;
         return formatEmailPreview(pendingEmail);
       }
-      // User sent something else — remind them gently but don't block
       if (t.length > 10 && !t.includes('@')) {
         await clearPendingEmail(user.id || platformId);
-        // Process their actual message below by falling through
       } else {
         return `📧 *Email ready to send!*\n\n*To:* ${pendingEmail.to || 'No recipient yet'}\n*Subject:* ${pendingEmail.subject}\n\nReply *send* ✅ or *cancel* ❌`;
       }
@@ -311,21 +329,23 @@ async function processMessage(platformId, platform, messageText, userName = '', 
 
   let userModel = 'groq';
   try { userModel = await db.getUserModel(user.id || platformId); } catch {}
-  // ── MULTI-LINE EXPENSE DETECTION ─────────────────────────────────────────
-const expenseLines = text.split('\n').filter(l => 
-  /i spent|i paid|spent ₹|paid ₹/i.test(l)
-);
-if (expenseLines.length > 1) {
-  let results = [];
-  for (const line of expenseLines) {
-    const exp = await ai.extractExpense(line);
-    if (exp) {
-      await db.logExpense(user.id || platformId, exp.amount, exp.category, exp.note);
-      results.push(`✅ ₹${Number(exp.amount).toLocaleString('en-IN')} — ${exp.note}`);
+
+  // ── MULTI-LINE EXPENSE DETECTION ──────────────────────────────────────────
+  const expenseLines = text.split('\n').filter(l =>
+    /i spent|i paid|spent ₹|paid ₹/i.test(l)
+  );
+  if (expenseLines.length > 1) {
+    let results = [];
+    for (const line of expenseLines) {
+      const exp = await ai.extractExpense(line);
+      if (exp) {
+        await db.logExpense(user.id || platformId, exp.amount, exp.category, exp.note);
+        results.push(`✅ ₹${Number(exp.amount).toLocaleString('en-IN')} — ${exp.note}`);
+      }
     }
+    if (results.length) return `💰 *${results.length} Expenses Logged!*\n\n${results.join('\n')}`;
   }
-  if (results.length) return `💰 *${results.length} Expenses Logged!*\n\n${results.join('\n')}`;
-}
+
   // ── INTENT DETECTION ──────────────────────────────────────────────────────
   const VALID_INTENTS = [
     'SEND_EMAIL','READ_CALENDAR','ADD_CALENDAR','SUMMARIZE',
@@ -337,10 +357,11 @@ if (expenseLines.length > 1) {
     'WRITE_CONTRACT','COMMODITY_PRICE','TRAIN_STATUS','TRACK_ORDER','TRANSCRIBE_MEETING',
     'ADD_TASK','VIEW_TASKS','COMPLETE_TASK','DELETE_TASK',
     'GST_FILING','GST_SUMMARY',
+    'SCHEDULE_MESSAGE',
     'CHAT'
   ];
 
-  // ── IMAGE GENERATION BLOCK ───────────────────────────────────────────────
+  // ── IMAGE GENERATION BLOCK ────────────────────────────────────────────────
   const lowerCheck = text.toLowerCase();
 
   // ── BULK DELETE REMINDERS ─────────────────────────────────────────────────
@@ -372,7 +393,6 @@ if (expenseLines.length > 1) {
     return `🖼️ I can't generate images yet — that feature is coming soon!\n\nBut I can help you with:\n• Writing a description of what you want\n• Finding similar images online\n• Anything else!\n\nWhat else can I help you with? `;
   }
 
-  // ── DELETE ALL REMINDERS (broader match) ────────────────────────────────
   if (lowerCheck === 'delete all' || lowerCheck === 'clear all reminders' ||
       lowerCheck === 'delete all reminders' || lowerCheck === 'remove all reminders') {
     await db.supabase.from('reminders').update({ active: false }).eq('user_id', user.id || platformId);
@@ -397,15 +417,17 @@ if (expenseLines.length > 1) {
       `\n\nWhich one to remove? Say "Remove alert 1"`;
   }
 
-  // ── FORCE CORRECT INTENTS FOR COMMON PATTERNS ───────────────────────────
-  // Prevent "write email" from triggering DRAFT_FOLLOWUP
+  // ── FORCE CORRECT INTENTS ─────────────────────────────────────────────────
   let forcedIntent = null;
   if (/^(write|draft|compose|create).*(email|mail)/i.test(lowerCheck) && !lowerCheck.includes('follow')) {
     forcedIntent = 'SEND_EMAIL';
   }
-  // Prevent Hinglish questions from triggering HELP
   if (/kya|kaisa|karo|kaise|bhai|yaar|mujhe|mera|tera/i.test(lowerCheck) && lowerCheck.length > 15) {
     forcedIntent = 'CHAT';
+  }
+  // Detect schedule message intent from natural language
+  if (/schedule.*(message|msg|text)|send.*(every|daily|weekly|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(lowerCheck)) {
+    forcedIntent = 'SCHEDULE_MESSAGE';
   }
 
   let rawIntent = forcedIntent || 'CHAT';
@@ -417,6 +439,34 @@ if (expenseLines.length > 1) {
 
   // ── ROUTE BY INTENT ───────────────────────────────────────────────────────
   switch (intent) {
+
+    case 'SCHEDULE_MESSAGE': {
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) {
+        return `📅 Scheduled messages are a *Pro feature*!${upgradeMessage(user.plan)}`;
+      }
+      const extracted = await ai.extractScheduledMessage(text);
+      if (!extracted) {
+        return `❌ I couldn't understand that.\n\nTry:\n"Schedule message to Rahul +919876543210 every Monday at 10am: Hi, just checking in!"`;
+      }
+      const { toPhone, toName, message, recurring, dayOfWeek, sendTime } = extracted;
+      if (!toPhone || !message || !sendTime) {
+        return `❌ I need a phone number, message and time.\n\nExample:\n"Schedule message to Rahul +919876543210 every Monday at 10am: Hi!"`;
+      }
+      try {
+        const { getNextRunTime } = require('../services/scheduledSender');
+        const timezone = db.getTimezoneFromPhone(user.phone) === 5.5 ? 'Asia/Kolkata' : 'Asia/Kolkata';
+        const nextRun = getNextRunTime(recurring, dayOfWeek, sendTime, timezone);
+        const newMsg = await db.createScheduledMessage(
+          user.id || platformId, platform, toPhone, toName, message, recurring, dayOfWeek, sendTime
+        );
+        await db.supabase.from('scheduled_messages').update({ next_run: nextRun, timezone }).eq('id', newMsg.id);
+        const recurrText = recurring === 'weekly' ? `every ${dayOfWeek}` : recurring;
+        return `✅ *Message Scheduled!*\n\n👤 To: ${toName || toPhone}\n💬 "${message}"\n🔄 ${recurrText} at ${sendTime}\n\nType */schedules* to manage.`;
+      } catch (e) {
+        console.error('Schedule message error:', e.message);
+        return `❌ Could not schedule. Try again.`;
+      }
+    }
 
     case 'SEND_EMAIL': {
       const draft = await ai.draftEmail(text, memoryCtx);
@@ -477,7 +527,6 @@ if (expenseLines.length > 1) {
     case 'VIEW_PRICE_ALERTS': {
       const alerts = await db.getActivePriceAlerts(user.id || platformId);
       if (!alerts.length) return '🔔 No active price alerts.\n\nSay "Alert me when [product] drops below ₹[price]"';
-      // Check if user wants to remove an alert
       const num = text.match(/\d+/);
       const wantsRemove = num && (text.toLowerCase().includes('remove') || text.toLowerCase().includes('delete') || text.toLowerCase().includes('cancel'));
       if (wantsRemove) {
@@ -558,7 +607,6 @@ if (expenseLines.length > 1) {
         reminders.map((r,i) => `${i+1}. *${r.text}*\n   🕐 ${r.time} · 🔄 ${r.recurring}`).join('\n\n');
     }
 
-    // ── TASK TRACKING ─────────────────────────────────────────────────────
     case 'ADD_TASK': {
       const task = await ai.extractTask(text);
       if (!task) return '❌ Try: "Add task: Call Rahul tomorrow"';
@@ -605,7 +653,6 @@ if (expenseLines.length > 1) {
       return `🗑️ "${allTasksD[idxD].title}" deleted!`;
     }
 
-    // ── GST FILING ────────────────────────────────────────────────────────
     case 'GST_FILING': {
       if (!db.PLAN_LIMITS[user.plan]?.features.includes('expense')) return `🧾 GST Filing is a *Pro feature*!${upgradeMessage(user.plan)}`;
       const expenses = await db.getExpenseSummary(user.id || platformId, 30);
@@ -648,7 +695,6 @@ if (expenseLines.length > 1) {
     default: {
       const lowerText = text.toLowerCase();
 
-      // Image generation — not supported yet
       if (lowerText.includes('image') || lowerText.includes('photo') || lowerText.includes('picture') ||
           lowerText.includes('इमेज') || lowerText.includes('फोटो') || lowerText.includes('generate image')) {
         return `🖼️ Image generation is not available yet in GamaClaw.\n\nI can help you with:\n• Writing descriptions\n• Finding information about the topic\n• Other tasks!\n\nWhat else can I help you with? `;

@@ -4,6 +4,9 @@ const db = require('../services/db');
 const ai = require('../services/ai');
 const calendarSvc = require('../services/calendar');
 
+const { runScheduledMessages } = require('./scheduledSender');
+
+
 // ── MORNING BRIEFING (8:00 AM IST) ───────────────────────────────────────────
 cron.schedule('30 2 * * *', async () => {
   console.log('⏰ Running morning briefing scheduler...');
@@ -41,254 +44,75 @@ cron.schedule('30 2 * * *', async () => {
   }
 }, { timezone: 'Asia/Kolkata' });
 
-// ── REMINDER SCHEDULER (every minute) ────────────────────────────────────────
+
+// ── REMINDER + SCHEDULED MESSAGES (every minute) ─────────────────────────────
 cron.schedule('* * * * *', async () => {
+
+  // ── 1. REMINDERS ───────────────────────────────────────────────────────────
   try {
     const { data: reminders, error } = await db.supabase
       .from('reminders')
       .select('*, users(id, platform_id, platform, name, phone)')
       .eq('active', true);
 
-    if (error || !reminders?.length) return;
+    if (!error && reminders?.length) {
+      for (const reminder of reminders) {
+        if (!reminder.users) continue;
 
-    for (const reminder of reminders) {
-      if (!reminder.users) continue;
+        const userTz    = db.getTimezoneFromPhone(reminder.users?.phone);
+        const now       = new Date(new Date().getTime() + (userTz * 60 * 60 * 1000));
+        const HH        = now.getHours().toString().padStart(2, '0');
+        const MM        = now.getMinutes().toString().padStart(2, '0');
+        const currentTime = `${HH}:${MM}`;
+        const today     = now.toISOString().split('T')[0];
+        const dayNames  = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+        const todayName = dayNames[now.getDay()];
 
-      // ── Get current time in user's timezone ──────────────────────────────
-      const userTz    = db.getTimezoneFromPhone(reminder.users?.phone);
-      const now       = new Date(new Date().getTime() + (userTz * 60 * 60 * 1000));
-      const HH        = now.getHours().toString().padStart(2, '0');
-      const MM        = now.getMinutes().toString().padStart(2, '0');
-      const currentTime = `${HH}:${MM}`;
-      const today     = now.toISOString().split('T')[0];
-      const dayNames  = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
-      const todayName = dayNames[now.getDay()];
+        const reminderTime = (reminder.time || '').substring(0, 5);
+        if (reminderTime !== currentTime) continue;
 
-      // ── Check time matches ────────────────────────────────────────────────
-      const reminderTime = (reminder.time || '').substring(0, 5);
-      if (reminderTime !== currentTime) continue;
+        let shouldFire = false;
+        switch (reminder.recurring) {
+          case 'once':
+            shouldFire = !reminder.date || reminder.date === today;
+            break;
+          case 'daily':
+            shouldFire = true;
+            break;
+          case 'weekly':
+            shouldFire = !reminder.day_of_week || todayName === reminder.day_of_week.toLowerCase();
+            break;
+          case 'monthly':
+            shouldFire = reminder.date
+              ? now.getDate() === new Date(reminder.date).getDate()
+              : true;
+            break;
+          default:
+            shouldFire = true;
+        }
 
-      // ── Check date/recurrence ─────────────────────────────────────────────
-      let shouldFire = false;
-      switch (reminder.recurring) {
-        case 'once':
-          shouldFire = !reminder.date || reminder.date === today;
-          break;
-        case 'daily':
-          shouldFire = true;
-          break;
-        case 'weekly':
-          shouldFire = !reminder.day_of_week || todayName === reminder.day_of_week.toLowerCase();
-          break;
-        case 'monthly':
-          shouldFire = reminder.date
-            ? now.getDate() === new Date(reminder.date).getDate()
-            : true;
-          break;
-        default:
-          shouldFire = true;
-      }
+        if (!shouldFire) continue;
 
-      if (!shouldFire) continue;
+        await sendReminder(reminder.users, reminder.text);
 
-      // ── Fire the reminder ─────────────────────────────────────────────────
-      await sendReminder(reminder.users, reminder.text);
-
-      // Deactivate one-time reminders after firing
-      if (reminder.recurring === 'once') {
-        await db.supabase.from('reminders').update({ active: false }).eq('id', reminder.id);
+        if (reminder.recurring === 'once') {
+          await db.supabase.from('reminders').update({ active: false }).eq('id', reminder.id);
+        }
       }
     }
   } catch (err) {
     console.error('Reminder scheduler error:', err.message);
   }
+
+  // ── 2. SCHEDULED MESSAGES ──────────────────────────────────────────────────
+  try {
+    await runScheduledMessages();
+  } catch (err) {
+    console.error('Scheduled messages error:', err.message);
+  }
+
 });
 
-// ── SCHEDULED LEAD FOLLOW-UP SCHEDULER (every minute) ───────────────────────
-  cron.schedule('* * * * *', async () => {
-  try {
-    console.log('🔍 Checking scheduled follow-up messages...');
-
-    const dueMessages = await db.getDueScheduledMessages();
-
-    console.log('📦 dueMessages:', JSON.stringify(dueMessages, null, 2));
-
-    if (!dueMessages?.length) {
-      console.log('ℹ️ No due scheduled messages found');
-      return;
-    }
-
-
-    for (const item of dueMessages) {
-      try {
-        const lead = item.leads;
-        const user = item.users;
-
-        if (!lead) {
-          console.log(`Skipping ${item.id}: lead not found`);
-          continue;
-        }
-
-        if (!lead.phone) {
-          console.log(`Skipping ${item.id}: lead has no phone`);
-          continue;
-        }
-
-        if (!lead.whatsapp_opted_in) {
-          console.log(`Skipping ${item.id}: lead has not opted in`);
-          continue;
-        }
-
-        if (!lead.active) {
-          console.log(`Skipping ${item.id}: lead inactive`);
-          continue;
-        }
-
-        if (!user) {
-          console.log(`Skipping ${item.id}: user not found`);
-          continue;
-        }
-
-        if (user.plan !== 'business') {
-          console.log(`Skipping ${item.id}: user is not on business plan`);
-          continue;
-        }
-
-        await sendWhatsAppMessage(lead.phone, item.message);
-
-        await db.markScheduledMessageSent(
-          item.id,
-          item.recurring,
-          item.time,
-          item.date,
-          item.day_of_week,
-          db.getTimezoneFromPhone(user.phone)
-        );
-
-        console.log(`✅ Scheduled follow-up sent to ${lead.name} (${lead.phone})`);
-      } catch (err) {
-        console.error(`❌ Scheduled follow-up error for ${item.id}:`, err.message);
-      }
-    }
-  } catch (err) {
-    console.error('Scheduled follow-up scheduler error:', err.message);
-  }
-});
-
-// ── SCHEDULED LEAD FOLLOW-UP SCHEDULER (every minute) ───────────────────────
-cron.schedule('* * * * *', async () => {
-  try {
-    const dueMessages = await db.getDueScheduledMessages();
-
-    if (!dueMessages?.length) return;
-
-    for (const item of dueMessages) {
-      try {
-        const lead = item.leads;
-        const user = item.users;
-
-        if (!lead) {
-          console.log(`Skipping ${item.id}: lead not found`);
-          continue;
-        }
-
-        if (!lead.phone) {
-          console.log(`Skipping ${item.id}: lead has no phone`);
-          continue;
-        }
-
-        if (!lead.whatsapp_opted_in) {
-          console.log(`Skipping ${item.id}: lead has not opted in`);
-          continue;
-        }
-
-        if (!lead.active) {
-          console.log(`Skipping ${item.id}: lead is inactive`);
-          continue;
-        }
-
-        if (!user) {
-          console.log(`Skipping ${item.id}: user not found`);
-          continue;
-        }
-
-        if (user.plan !== 'business') {
-          console.log(`Skipping ${item.id}: user is not on business plan`);
-          continue;
-        }
-
-        await sendWhatsAppMessage(lead.phone, item.message);
-
-        await db.markScheduledMessageSent(
-          item.id,
-          item.recurring,
-          item.time,
-          item.date,
-          item.day_of_week,
-          db.getTimezoneFromPhone(user.phone)
-        );
-
-        console.log(`✅ Scheduled follow-up sent to ${lead.name} (${lead.phone})`);
-      } catch (err) {
-        console.error(`❌ Scheduled message error for ${item.id}:`, err.message);
-      }
-    }
-  } catch (err) {
-    console.error('Scheduled lead follow-up scheduler error:', err.message);
-  }
-});
-
-// ── SEND WHATSAPP MESSAGE ─────────────────────────────────────────────────────
-async function sendWhatsAppMessage(to, text) {
-  try {
-    const fetch = require('node-fetch');
-
-    await fetch(`https://graph.facebook.com/v22.0/${process.env.WHATSAPP_PHONE_ID}/messages`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to,
-        type: 'text',
-        text: { body: text },
-      }),
-    });
-
-    console.log(`✅ WhatsApp message sent to ${to}`);
-  } catch (err) {
-    console.error(`❌ WhatsApp send failed to ${to}:`, err.message);
-    throw err;
-  }
-}
-
-// ── SEND WHATSAPP MESSAGE ─────────────────────────────────────────────────────
-async function sendWhatsAppMessage(to, text) {
-  try {
-    const fetch = require('node-fetch');
-
-    await fetch(`https://graph.facebook.com/v22.0/${process.env.WHATSAPP_PHONE_ID}/messages`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to,
-        type: 'text',
-        text: { body: text },
-      }),
-    });
-
-    console.log(`✅ WhatsApp message sent to ${to}`);
-  } catch (err) {
-    console.error(`❌ WhatsApp send failed to ${to}:`, err.message);
-    throw err;
-  }
-}
 
 // ── SEND REMINDER ─────────────────────────────────────────────────────────────
 async function sendReminder(user, text) {
@@ -332,4 +156,4 @@ async function sendReminder(user, text) {
   }
 }
 
-console.log('⏰ Morning briefing + reminder + scheduled follow-up scheduler started');
+console.log('⏰ Morning briefing + reminder + scheduled messages started');
