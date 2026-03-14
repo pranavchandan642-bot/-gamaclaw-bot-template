@@ -295,6 +295,33 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     'CHAT'
   ];
 
+  // ── IMAGE GENERATION BLOCK ───────────────────────────────────────────────
+  const lowerCheck = text.toLowerCase();
+  if ((lowerCheck.includes('generate') || lowerCheck.includes('create') || lowerCheck.includes('make') ||
+       lowerCheck.includes('बनाओ') || lowerCheck.includes('जेनरेट') || lowerCheck.includes('बना दो')) &&
+      (lowerCheck.includes('image') || lowerCheck.includes('photo') || lowerCheck.includes('picture') ||
+       lowerCheck.includes('इमेज') || lowerCheck.includes('फोटो') || lowerCheck.includes('तस्वीर'))) {
+    return `🖼️ I can't generate images yet — that feature is coming soon!\n\nBut I can help you with:\n• Writing a description of what you want\n• Finding similar images online\n• Anything else!\n\nWhat else can I help you with? 🦀`;
+  }
+
+  // ── PRICE ALERT REMOVAL SHORTCUT ─────────────────────────────────────────
+  if ((lowerCheck.includes('remove') || lowerCheck.includes('delete') || lowerCheck.includes('cancel')) &&
+      (lowerCheck.includes('alert') || lowerCheck.includes('price alert'))) {
+    const alerts = await db.getActivePriceAlerts(user.id || platformId);
+    if (!alerts.length) return '🔔 You have no active price alerts.';
+    const num = text.match(/\d+/);
+    if (num) {
+      const idx = parseInt(num[0]) - 1;
+      if (alerts[idx]) {
+        await db.supabase.from('price_alerts').update({ active: false }).eq('id', alerts[idx].id);
+        return `✅ Done! Price alert for *${alerts[idx].item}* removed.`;
+      }
+    }
+    return `🔔 *Your Price Alerts:*\n\n` +
+      alerts.map((a,i) => `${i+1}. ${a.item} — below ₹${Number(a.target_price).toLocaleString('en-IN')}`).join('\n') +
+      `\n\nWhich one to remove? Say "Remove alert 1"`;
+  }
+
   let rawIntent = 'CHAT';
   try { rawIntent = await ai.detectIntent(text); } catch {}
   const intent = VALID_INTENTS.includes(rawIntent.trim().toUpperCase())
@@ -463,23 +490,33 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     }
 
     case 'COMPLETE_TASK': {
-      const num = text.match(/\d+/);
-      if (!num) return '❌ Say: "Done task 1"';
-      const tasks = await db.getTasks(user.id || platformId);
-      const idx = parseInt(num[0]) - 1;
-      if (!tasks[idx]) return `❌ Task ${num[0]} not found.`;
-      await db.completeTask(tasks[idx].id);
-      return `✅ *Done!*\n\n~~${tasks[idx].title}~~ ✓\n\nGreat work! 🎉`;
+      const allTasksC = await db.getTasks(user.id || platformId);
+      if (!allTasksC.length) return `You have no pending tasks right now! 📋\n\nAdd one: "Add task: Call client tomorrow"`;
+      const numC = text.match(/\d+/);
+      if (!numC) {
+        return `Which task did you finish? 🎉\n\n` + allTasksC.map((t,i) => `${i+1}. ${t.title}`).join('\n') + `\n\nSay "Done task 1"`;
+      }
+      const idxC = parseInt(numC[0]) - 1;
+      if (!allTasksC[idxC]) {
+        return `Hmm, I don't see task ${numC[0]}. Here are your tasks:\n\n` + allTasksC.map((t,i) => `${i+1}. ${t.title}`).join('\n');
+      }
+      await db.completeTask(allTasksC[idxC].id);
+      return `✅ *${allTasksC[idxC].title}* — done! Great work 💪🎉`;
     }
 
     case 'DELETE_TASK': {
-      const num = text.match(/\d+/);
-      if (!num) return '❌ Say: "Delete task 1"';
-      const tasks = await db.getTasks(user.id || platformId);
-      const idx = parseInt(num[0]) - 1;
-      if (!tasks[idx]) return `❌ Task ${num[0]} not found.`;
-      await db.deleteTask(tasks[idx].id);
-      return `🗑️ *Deleted!*\n\n"${tasks[idx].title}" removed.`;
+      const allTasksD = await db.getTasks(user.id || platformId);
+      if (!allTasksD.length) return `You have no tasks to delete! 📋`;
+      const numD = text.match(/\d+/);
+      if (!numD) {
+        return `Which task do you want to delete?\n\n` + allTasksD.map((t,i) => `${i+1}. ${t.title}`).join('\n') + `\n\nSay "Delete task 1"`;
+      }
+      const idxD = parseInt(numD[0]) - 1;
+      if (!allTasksD[idxD]) {
+        return `I don't see task ${numD[0]}. Here are your tasks:\n\n` + allTasksD.map((t,i) => `${i+1}. ${t.title}`).join('\n');
+      }
+      await db.deleteTask(allTasksD[idxD].id);
+      return `🗑️ "${allTasksD[idxD].title}" deleted!`;
     }
 
     // ── GST FILING ────────────────────────────────────────────────────────
