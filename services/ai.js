@@ -535,7 +535,29 @@ async function trackOrder(message) {
   }
   return `📦 *Order: ${orderId}*\n\nI can't access live order data directly.\n\n🔗 Track at:\n• Amazon: amazon.in/orders\n• Flipkart: flipkart.com/account/orders`;
 }
+ async function extractAutoMemory(message) {
+  const result = await askJSON(`Analyze this message and extract any important personal information worth remembering long-term.
 
+Message: "${message}"
+
+Only extract if the message CLEARLY contains:
+- Person's name ("I am Pranav", "My name is...")
+- Job/profession ("I am a developer", "I work at...")
+- Location ("I live in Mumbai", "I am from...")
+- Business info ("My startup is...", "My company...")
+- Important preferences ("I prefer...", "I always...")
+- Contact info ("My email is...", "My phone...")
+- Family info ("My wife's name...", "I have 2 kids...")
+- Goals ("I am trying to...", "My goal is...")
+
+If nothing important found, return: {"found": false}
+If found, return: {"found": true, "key": "short_label", "value": "what to remember"}
+
+IMPORTANT: Return {"found": false} for casual chat, questions, calculations, greetings.
+Only return {"found": true} for genuinely useful long-term personal info.`);
+
+  return result;
+}
 async function transcribeMeeting(audioBase64, mimeType = 'audio/ogg') {
   try {
     const { toFile } = require('groq-sdk');
@@ -553,7 +575,7 @@ async function transcribeMeeting(audioBase64, mimeType = 'audio/ogg') {
 }
 
 module.exports = {
-  detectIntent, draftEmail, extractEventDetails, extractExpense, summarizeExpenses,
+  extractAutoMemory,detectIntent, draftEmail, extractEventDetails, extractExpense, summarizeExpenses,
   summarizeMeeting, extractPriceAlert, extractMemory, extractLead, draftFollowUp,
   generateBriefing, transcribeAndDetect, chat,
   getWeather, getNews, webSearch, extractReminder, extractInvoiceDetails,

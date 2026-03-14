@@ -3,6 +3,18 @@ const db = require('../services/db');
 const emailSvc = require('../services/email');
 const calendarSvc = require('../services/calendar');
 
+ async function runAutoMemory(userId, userMessage) {
+  try {
+    const result = await ai.extractAutoMemory(userMessage);
+    if (result?.found && result?.key && result?.value) {
+      await db.saveMemory(userId, result.key, result.value);
+      console.log(`🧠 Auto-saved: ${result.key} = ${result.value}`);
+    }
+  } catch {
+    // Silent fail
+  }
+}
+
 // Pending actions per user - persisted in Supabase memories
 const pendingCache = {};
 
@@ -641,6 +653,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       const reply = await ai.chat(text, history, memoryCtx, userModel);
       await db.saveMessage(user.id || platformId, 'user', text);
       await db.saveMessage(user.id || platformId, 'assistant', reply);
+      runAutoMemory(user.id || platformId, text).catch(() => {});
       return reply;
     }
   }
