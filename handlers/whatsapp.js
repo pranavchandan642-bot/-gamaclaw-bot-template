@@ -88,9 +88,6 @@ router.post('/', express.json(), async (req, res) => {
     }
 
     // ── OPT-IN LINK DETECTION ─────────────────────────────────────────────────
-    // When a client clicks a freelancer's opt-in link, the message starts with
-    // "Hi " or "Hello " followed by the freelancer's bot name
-    // Format: "Hi GamaClaw:USERID" — we embed the freelancer's user ID in the link
     if (text) {
       const optInMatch = text.match(/^Hi GamaClaw:([a-zA-Z0-9_-]+)/i);
       if (optInMatch) {
@@ -100,8 +97,15 @@ router.post('/', express.json(), async (req, res) => {
       }
     }
 
-    const response  = await processMessage(from, 'whatsapp', text, profileName, audioBase64);
+    // ── PROCESS MESSAGE ───────────────────────────────────────────────────────
+    const response = await processMessage(from, 'whatsapp', text, profileName, audioBase64);
+
+    if (!response) {
+      console.error(`⚠️ processMessage returned empty for: "${text}"`);
+    }
+
     const formatted = formatForWhatsApp(response);
+    console.log(`📤 Sending to ${from}: "${formatted?.substring(0, 80)}..."`);
     await sendWhatsAppMessage(from, formatted);
 
   } catch (err) {
@@ -112,7 +116,6 @@ router.post('/', express.json(), async (req, res) => {
 // ── HANDLE CLIENT OPT-IN ──────────────────────────────────────────────────────
 async function handleClientOptIn(clientPhone, clientName, freelancerId) {
   try {
-    // Save client as a lead under the freelancer's account
     await db.supabase.from('leads').insert({
       user_id: freelancerId,
       name: clientName || clientPhone,
@@ -126,12 +129,10 @@ async function handleClientOptIn(clientPhone, clientName, freelancerId) {
 
     console.log(`✅ Client opted in: ${clientPhone} → freelancer ${freelancerId}`);
 
-    // Welcome the client
     await sendWhatsAppMessage(clientPhone,
       `👋 Hi ${clientName || 'there'}! You're now connected.\n\nI'll pass your message along. How can I help you?`
     );
 
-    // Notify the freelancer
     const { data: freelancer } = await db.supabase
       .from('users')
       .select('platform_id, platform, name')
@@ -155,13 +156,14 @@ async function handleClientOptIn(clientPhone, clientName, freelancerId) {
 
 // ── FORMAT FOR WHATSAPP ───────────────────────────────────────────────────────
 function formatForWhatsApp(text) {
-  if (!text) return '';
-  return String(text)
+  if (!text) return '✅ Done!';
+  const formatted = String(text)
     .replace(/\*\*(.*?)\*\*/g, '*$1*')
     .replace(/^#{1,3} (.+)$/gm, '*$1*')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
     .replace(/`{3}[a-z]*\n?([\s\S]*?)`{3}/g, '```$1```')
     .trim();
+  return formatted || String(text).trim() || '✅ Done!';
 }
 
 // ── SEND MESSAGE ──────────────────────────────────────────────────────────────
@@ -200,7 +202,7 @@ async function sendWhatsAppMessage(to, text) {
       if (!res.ok) {
         const err = await res.json();
         if (err.error?.code === 190) {
-          console.error('❌ WhatsApp token EXPIRED! Go to Meta → API Setup → Generate access token → Update WHATSAPP_TOKEN in Render');
+          console.error('❌ WhatsApp token EXPIRED! Regenerate from Meta → API Setup → Update WHATSAPP_TOKEN in Render');
         } else {
           console.error('WhatsApp send error:', JSON.stringify(err));
         }
