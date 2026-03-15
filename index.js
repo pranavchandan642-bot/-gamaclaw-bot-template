@@ -1,5 +1,3 @@
-require('dotenv').config();
-
 const express = require('express');
 const app = express();
 app.use(express.json());
@@ -7,7 +5,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 // ── Health check ──────────────────────────────────────────────────────────────
-app.get('/', (req, res) => res.send(' GamaClaw Platform is running!'));
+app.get('/', (req, res) => res.send('🦀 GamaClaw Platform is running!'));
 app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime(), bots: botManager.getCount() }));
 
 // ── WhatsApp Webhook ──────────────────────────────────────────────────────────
@@ -21,17 +19,18 @@ app.use('/webhook', paymentsRouter);
 // ── Bot Manager ───────────────────────────────────────────────────────────────
 const botManager = require('./handlers/botManager');
 
+// ── DB ────────────────────────────────────────────────────────────────────────
+const db = require('./services/db');
+
 // ── Platform API ──────────────────────────────────────────────────────────────
 
-// Deploy a new bot (called when user signs up on platform)
+// Deploy a new bot
 app.post('/api/deploy', async (req, res) => {
   try {
     const { botToken, botName, ownerEmail, aiModel, plan } = req.body;
-
     if (!botToken || !ownerEmail) {
       return res.status(400).json({ error: 'botToken and ownerEmail are required' });
     }
-
     const result = await botManager.deployBot({
       botToken,
       botName: botName || 'My AI Bot',
@@ -39,7 +38,6 @@ app.post('/api/deploy', async (req, res) => {
       aiModel: aiModel || 'groq',
       plan: plan || 'free',
     });
-
     res.json({ success: true, botId: result.botId, message: 'Bot deployed successfully!' });
   } catch (err) {
     console.error('Deploy error:', err.message);
@@ -72,6 +70,49 @@ app.get('/api/bots/:botId', (req, res) => {
   const bot = botManager.getBot(req.params.botId);
   if (!bot) return res.status(404).json({ error: 'Bot not found' });
   res.json({ botId: bot.botId, botName: bot.botName, status: bot.status, aiModel: bot.aiModel });
+});
+
+// ── PAYMENT LINK API (called from pricing page) ───────────────────────────────
+app.post('/api/payment-link', async (req, res) => {
+  // Allow CORS from your website
+  res.setHeader('Access-Control-Allow-Origin', 'https://gamaclaw.vercel.app');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+
+  const { plan, email, name, adminKey } = req.body;
+
+  if (adminKey !== process.env.ADMIN_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (!plan || !email) {
+    return res.status(400).json({ error: 'plan and email are required' });
+  }
+
+  try {
+    const payment = require('./handlers/payments');
+
+    // Find user by email
+    const { data: user } = await db.supabase
+      .from('users')
+      .select('id, email, name')
+      .eq('email', email)
+      .single();
+
+    const userId = user?.id || email;
+    const userName = name || user?.name || '';
+    const planKey = plan === 'pro' ? 'pro_india' : 'business_india';
+
+    const link = await payment.createPaymentLink(userId, planKey, email, userName);
+    if (!link) throw new Error('Could not generate payment link');
+
+    res.json({ link });
+  } catch (err) {
+    console.error('Payment link API error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Start server ──────────────────────────────────────────────────────────────

@@ -140,6 +140,9 @@ REVIEW_RESUME, WRITE_CONTRACT, COMMODITY_PRICE, TRAIN_STATUS, TRACK_ORDER,
 TRANSCRIBE_MEETING, ADD_TASK, VIEW_TASKS, COMPLETE_TASK, DELETE_TASK,
 GST_FILING, GST_SUMMARY, SCHEDULE_MESSAGE, CHAT
 
+SCHEDULE MESSAGE RULES:
+- "schedule message to", "send message every", "message +91 every", "send every monday/daily/weekly" = SCHEDULE_MESSAGE
+
 Message: "${message}"`);
   return intent.toUpperCase().trim();
 }
