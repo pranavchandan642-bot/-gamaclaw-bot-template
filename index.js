@@ -1,8 +1,24 @@
 const express = require('express');
+const cors = require('cors');
 const app = express();
+
+// ── CORS ──────────────────────────────────────────────────────────────────────
+app.use(cors({
+  origin: 'https://gamaclaw.vercel.app',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 200,
+}));
+
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+
+// ── Bot Manager ───────────────────────────────────────────────────────────────
+const botManager = require('./handlers/botManager');
+
+// ── DB ────────────────────────────────────────────────────────────────────────
+const db = require('./services/db');
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/', (req, res) => res.send('🦀 GamaClaw Platform is running!'));
@@ -15,12 +31,6 @@ app.use('/webhook/whatsapp', whatsappRouter);
 // ── Razorpay Webhook ──────────────────────────────────────────────────────────
 const paymentsRouter = require('./handlers/payments');
 app.use('/webhook', paymentsRouter);
-
-// ── Bot Manager ───────────────────────────────────────────────────────────────
-const botManager = require('./handlers/botManager');
-
-// ── DB ────────────────────────────────────────────────────────────────────────
-const db = require('./services/db');
 
 // ── Platform API ──────────────────────────────────────────────────────────────
 
@@ -72,15 +82,8 @@ app.get('/api/bots/:botId', (req, res) => {
   res.json({ botId: bot.botId, botName: bot.botName, status: bot.status, aiModel: bot.aiModel });
 });
 
-// ── PAYMENT LINK API (called from pricing page) ───────────────────────────────
+// ── PAYMENT LINK API ──────────────────────────────────────────────────────────
 app.post('/api/payment-link', async (req, res) => {
-  // Allow CORS from your website
-  res.setHeader('Access-Control-Allow-Origin', 'https://gamaclaw.vercel.app');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
-
   const { plan, email, name, adminKey } = req.body;
 
   if (adminKey !== process.env.ADMIN_KEY) {
@@ -93,8 +96,6 @@ app.post('/api/payment-link', async (req, res) => {
 
   try {
     const payment = require('./handlers/payments');
-
-    // Find user by email
     const { data: user } = await db.supabase
       .from('users')
       .select('id, email, name')
@@ -115,17 +116,21 @@ app.post('/api/payment-link', async (req, res) => {
   }
 });
 
+// ── KEEP ALIVE — prevents Render free tier spin-down ─────────────────────────
+const https = require('https');
+setInterval(() => {
+  https.get('https://gamaclaw-bot.onrender.com/health', (res) => {
+    console.log(`💓 Keep-alive ping: ${res.statusCode}`);
+  }).on('error', (e) => {
+    console.log(`💓 Keep-alive error: ${e.message}`);
+  });
+}, 14 * 60 * 1000);
+
 // ── Start server ──────────────────────────────────────────────────────────────
 app.listen(PORT, async () => {
   console.log(`✅ GamaClaw Platform running on port ${PORT}`);
-
-  // Start the main GamaClaw bot
   require('./handlers/telegram');
   require('./handlers/discord').startDiscord();
-
-  // Start reminder scheduler
   require('./services/scheduler');
-
-  // Load and restart all previously deployed bots from Supabase
   await botManager.loadDeployedBots();
 });
