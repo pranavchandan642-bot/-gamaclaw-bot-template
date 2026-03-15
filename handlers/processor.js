@@ -15,7 +15,6 @@ async function runAutoMemory(userId, userMessage) {
   }
 }
 
-// Pending actions per user
 const pendingCache = {};
 
 function getPending(userId) {
@@ -53,7 +52,6 @@ async function clearPendingEmail(userId) {
   await db.deleteMemory(userId, 'pending_email').catch(()=>{});
 }
 
-// ── UPGRADE MESSAGE ───────────────────────────────────────────────────────────
 function upgradeMessage(plan) {
   if (plan === 'free') {
     return `\n\n⭐ *Upgrade to Pro* for unlimited messages + calendar, expense tracker, voice notes & more!\n👉 Send */upgrade* to see plans`;
@@ -61,7 +59,6 @@ function upgradeMessage(plan) {
   return '';
 }
 
-// ── PLAN INFO ─────────────────────────────────────────────────────────────────
 function planInfo(user) {
   const limits = db.PLAN_LIMITS[user.plan];
   const earlyAdopterBadge = user.is_early_adopter ? '\n🎖️ *Early Adopter* — Free Pro for 1 month!' : '';
@@ -73,11 +70,10 @@ function planInfo(user) {
     (user.plan === 'free' ? `👉 Type */upgrade* to unlock everything!` : `🎉 You have full access!`);
 }
 
-// ── UPGRADE OPTIONS ───────────────────────────────────────────────────────────
 async function upgradeOptions(userId = null, userEmail = '', userName = '') {
   const payment = require('./payments');
-  let proLink = 'https://gamaclaw.vercel.app/#pricing';
-  let bizLink = 'https://gamaclaw.vercel.app/#pricing';
+  let proLink = 'https://gamaclaw.vercel.app/pricing';
+  let bizLink = 'https://gamaclaw.vercel.app/pricing';
   if (userId) {
     try {
       const [pl, bl] = await Promise.all([
@@ -98,7 +94,6 @@ async function upgradeOptions(userId = null, userEmail = '', userName = '') {
     `_Payment auto-upgrades your account instantly!_ ✅`;
 }
 
-// ── HELP MESSAGE ──────────────────────────────────────────────────────────────
 function helpMessage(plan) {
   const isPro = plan === 'pro' || plan === 'business';
   return ` *GamaClaw — Your 24/7 AI Assistant*\n\n` +
@@ -135,7 +130,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   const user = await db.getOrCreateUser(platformId, platform, userName);
   const p = getPending(user.id || platformId);
 
-  // ── PLATFORM ACCESS CONTROL ───────────────────────────────────────────────
   if (!db.canAccessPlatform(platform, user.plan)) {
     return `🔒 *WhatsApp & Discord access requires Pro or Business plan!*\n\n` +
       `You're currently on the *FREE* plan.\n\n` +
@@ -246,18 +240,19 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       return `❌ Invalid code.`;
     } catch { return `❌ Could not link. Try again.`; }
   }
-   // ── MY OPT-IN LINK ────────────────────────────────────────────────────────────
- if (text === '/mylink' || lowerTextCmd === 'my link' || lowerTextCmd === 'get my link') {
-  const waNumber = process.env.WHATSAPP_PHONE_ID_DISPLAY || '919XXXXXXXXX'; // your bot's WA number
-  const encodedMsg = encodeURIComponent(`Hi GamaClaw:${user.id}`);
-  const link = `https://wa.me/${waNumber}?text=${encodedMsg}`;
-  return `🔗 *Your Client Opt-in Link*\n\n${link}\n\n📲 Share this with your clients.\nWhen they click it → they message your bot → you can schedule messages to them!\n\nThey'll be saved automatically under your leads.`;
- }
 
-  // ── SCHEDULED MESSAGES COMMANDS ───────────────────────────────────────────
+  // ── DECLARE lowerTextCmd HERE — before any code that uses it ─────────────
   const lowerTextCmd = text.toLowerCase().trim();
 
-  // /schedules — list all
+  // ── MY OPT-IN LINK ────────────────────────────────────────────────────────
+  if (text === '/mylink' || lowerTextCmd === 'my link' || lowerTextCmd === 'get my link') {
+    const waNumber = process.env.WHATSAPP_PHONE_ID_DISPLAY || '919XXXXXXXXX';
+    const encodedMsg = encodeURIComponent(`Hi GamaClaw:${user.id}`);
+    const link = `https://wa.me/${waNumber}?text=${encodedMsg}`;
+    return `🔗 *Your Client Opt-in Link*\n\n${link}\n\n📲 Share this with your clients.\nWhen they click it → they message your bot → you can schedule messages to them!\n\nThey'll be saved automatically under your leads.`;
+  }
+
+  // ── SCHEDULED MESSAGES COMMANDS ───────────────────────────────────────────
   if (lowerTextCmd === '/schedules' || lowerTextCmd === 'my schedules' || lowerTextCmd === 'show schedules') {
     if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) {
       return `📅 Scheduled messages are a *Pro feature*!${upgradeMessage(user.plan)}`;
@@ -270,7 +265,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     return `📅 *Your Scheduled Messages (${msgs.length}):*\n\n${list}\n\nSay "Cancel schedule 1" to remove one.`;
   }
 
-  // Cancel schedule N
   const cancelMatch = lowerTextCmd.match(/^cancel schedule\s+(\d+)$/);
   if (cancelMatch) {
     const index = parseInt(cancelMatch[1]) - 1;
@@ -368,7 +362,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     'CHAT'
   ];
 
-  // ── IMAGE GENERATION BLOCK ────────────────────────────────────────────────
   const lowerCheck = text.toLowerCase();
 
   // ── BULK DELETE REMINDERS ─────────────────────────────────────────────────
@@ -378,7 +371,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     return '✅ All reminders cleared!';
   }
 
-  // ── DELETE SPECIFIC REMINDER ──────────────────────────────────────────────
   if ((lowerCheck.includes('delete reminder') || lowerCheck.includes('remove reminder') || lowerCheck.includes('cancel reminder'))) {
     const reminders = await db.getReminders(user.id || platformId);
     if (!reminders.length) return 'You have no active reminders!';
@@ -406,7 +398,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     return '✅ All reminders cleared! You have no active reminders now.';
   }
 
-  // ── PRICE ALERT REMOVAL SHORTCUT ─────────────────────────────────────────
   if ((lowerCheck.includes('remove') || lowerCheck.includes('delete') || lowerCheck.includes('cancel')) &&
       (lowerCheck.includes('alert') || lowerCheck.includes('price alert'))) {
     const alerts = await db.getActivePriceAlerts(user.id || platformId);
@@ -432,11 +423,10 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   if (/kya|kaisa|karo|kaise|bhai|yaar|mujhe|mera|tera/i.test(lowerCheck) && lowerCheck.length > 15) {
     forcedIntent = 'CHAT';
   }
-  // Detect schedule message intent from natural language
-  
-  if (/schedule.*(message|msg|text|to)|send.*(every|daily|weekly|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|(message|msg|text).*every.*(day|week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday|am|pm)/i.test(lowerCheck)) {
+  if (/schedule.*(message|msg|text|to)|send\s*(message|msg)?\s*(to\s+)?.*(every|daily|weekly|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|(message|msg|text).*every.*(day|week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday|am|pm)|every\s*(day|daily|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday).*(at\s*\d)/i.test(lowerCheck)) {
     forcedIntent = 'SCHEDULE_MESSAGE';
-   }
+  }
+
   let rawIntent = forcedIntent || 'CHAT';
   try { if (!forcedIntent) rawIntent = await ai.detectIntent(text); } catch {}
   const intent = VALID_INTENTS.includes(rawIntent.trim().toUpperCase())
@@ -461,7 +451,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       }
       try {
         const { getNextRunTime } = require('../services/scheduledSender');
-        const timezone = db.getTimezoneFromPhone(user.phone) === 5.5 ? 'Asia/Kolkata' : 'Asia/Kolkata';
+        const timezone = 'Asia/Kolkata';
         const nextRun = getNextRunTime(recurring, dayOfWeek, sendTime, timezone);
         const newMsg = await db.createScheduledMessage(
           user.id || platformId, platform, toPhone, toName, message, recurring, dayOfWeek, sendTime
@@ -736,7 +726,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   }
 }
 
-// ── HELPERS ───────────────────────────────────────────────────────────────────
 function formatEmailPreview(draft) {
   return `📧 *Email Draft Ready!*\n\n*To:* ${draft.to}\n*Subject:* ${draft.subject}\n\n*Body:*\n${draft.body}\n\n` +
     `Reply *SEND* ✅ · *EDIT* ✏️ · *CANCEL* ❌`;
