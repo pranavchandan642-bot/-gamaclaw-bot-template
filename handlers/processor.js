@@ -4,7 +4,6 @@ const emailSvc = require('../services/email');
 const calendarSvc = require('../services/calendar');
 
 // ── ONBOARDING STATE ──────────────────────────────────────────────────────────
-// Tracks users mid-onboarding: 'awaiting_code' | 'awaiting_phone'
 const onboardingState = new Map();
 
 async function runAutoMemory(userId, userMessage) {
@@ -14,9 +13,7 @@ async function runAutoMemory(userId, userMessage) {
       await db.saveMemory(userId, result.key, result.value);
       console.log(`🧠 Auto-saved: ${result.key} = ${result.value}`);
     }
-  } catch {
-    // Silent fail
-  }
+  } catch { }
 }
 
 const pendingCache = {};
@@ -131,7 +128,6 @@ function helpMessage(plan) {
 
 // ── ONBOARDING HELPERS ────────────────────────────────────────────────────────
 
-// Try to claim a linking code and attach platform_id to the auth account
 async function tryLinkCode(code, platformId, platform, name) {
   try {
     const { data: linkRow } = await db.supabase
@@ -144,13 +140,11 @@ async function tryLinkCode(code, platformId, platform, name) {
 
     if (!linkRow) return { success: false };
 
-    // Mark code as used
     await db.supabase
       .from('linking_codes')
       .update({ used: true })
       .eq('code', code);
 
-    // Upsert user — link bot platform_id to their Google auth account
     await db.supabase
       .from('users')
       .upsert({
@@ -162,14 +156,13 @@ async function tryLinkCode(code, platformId, platform, name) {
         plan: 'free',
       }, { onConflict: 'auth_user_id' });
 
-    return { success: true, authUserId: linkRow.auth_user_id };
+    return { success: true };
   } catch (e) {
     console.error('tryLinkCode error:', e);
     return { success: false };
   }
 }
 
-// Save phone number to users table
 async function savePhone(platformId, platform, phone) {
   try {
     await db.supabase
@@ -188,54 +181,48 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   let text = messageText?.trim() || '';
   text = text.replace(/^["'""]|["'""]$/g, '').trim();
 
-  // ── STEP 1: HANDLE /start (always, before DB checks) ─────────────────────
+  // ── STEP 1: HANDLE /start ─────────────────────────────────────────────────
   if (text === '/start' || text.startsWith('/start ')) {
     const parts = text.split(' ');
     const codeFromDeepLink = parts[1];
 
+    // Always set state to awaiting_code first
+    onboardingState.set(String(platformId), { step: 'awaiting_code' });
+
     if (codeFromDeepLink && /^\d{6}$/.test(codeFromDeepLink)) {
-      // Deep-link with code — try to link immediately
-      const linked = await tryLinkCode(codeFromDeepLink, platformId, platform, userName);
-      if (linked.success) {
-        onboardingState.set(String(platformId), { step: 'awaiting_phone' });
-        return `✅ *Code accepted! Welcome, ${userName || 'there'}!*\n\n` +
-          `📱 *One last step* — please share your phone number to activate your account.\n\n` +
-          `Just type it with country code:\n` +
-          `Example: \`+91 9876543210\`\n\n` +
-          `_This is required to use GamaClaw._`;
-      } else {
-        onboardingState.set(String(platformId), { step: 'awaiting_code' });
-        return `👋 *Welcome to GamaClaw!*\n\n` +
-          `That code didn't work — it may have expired.\n\n` +
-          `Please go to *gamaclaw.vercel.app/activate* to get a fresh code, then send it here.`;
-      }
+      // Deep link included the code — show it as hint, user just needs to send it
+      return `👋 *Welcome to GamaClaw, ${userName || 'there'}!*\n\n` +
+        `I can see your connect code from the website.\n\n` +
+        `Just send me this code to activate:\n\n` +
+        `🔑 *${codeFromDeepLink}*\n\n` +
+        `_(Just type it or copy-paste it below)_ 👇`;
     } else {
-      // Plain /start — ask for connect code
-      onboardingState.set(String(platformId), { step: 'awaiting_code' });
       return `👋 *Welcome to GamaClaw!*\n\n` +
-        `To activate your bot, I need your *connect code*.\n\n` +
+        `To activate your bot:\n\n` +
         `1️⃣ Go to *gamaclaw.vercel.app/activate*\n` +
         `2️⃣ Sign in with Google\n` +
-        `3️⃣ Copy the 6-digit code shown on the page\n` +
+        `3️⃣ Copy the 6-digit code shown on that page\n` +
         `4️⃣ Send it here\n\n` +
-        `Already have your code? Just send it now! 👇`;
+        `Already have your code? Just send the 6 digits now! 👇`;
     }
   }
 
-  // ── STEP 2: HANDLE ONBOARDING STATE (code + phone entry) ─────────────────
+  // ── STEP 2: HANDLE ONBOARDING STATE ──────────────────────────────────────
   const obState = onboardingState.get(String(platformId));
 
   if (obState?.step === 'awaiting_code') {
-    const trimmed = text.replace(/\s+/g, '').replace(/-/g, '');
+    // Accept plain 6 digits — /connect prefix not required
+    const trimmed = text.replace(/\s+/g, '').replace(/-/g, '').replace('/connect', '').trim();
     if (/^\d{6}$/.test(trimmed)) {
       const linked = await tryLinkCode(trimmed, platformId, platform, userName);
       if (linked.success) {
         onboardingState.set(String(platformId), { step: 'awaiting_phone' });
-        return `✅ *Code accepted!*\n\n` +
-          `📱 Now please share your *phone number* to complete activation.\n\n` +
+        return `✅ *Code accepted! Welcome, ${userName || 'there'}!*\n\n` +
+          `📱 *One last step!*\n\n` +
+          `Please send your *phone number* to activate your account.\n\n` +
           `Type it with country code:\n` +
           `Example: \`+91 9876543210\`\n\n` +
-          `_This is required to start using GamaClaw._`;
+          `_This is required to use GamaClaw._`;
       } else {
         return `❌ That code is *invalid or expired*.\n\n` +
           `Please go to *gamaclaw.vercel.app/activate* and copy a fresh 6-digit code.`;
@@ -251,18 +238,21 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     if (phoneClean.length >= 8 && /^[\+0-9]+$/.test(phoneClean)) {
       await savePhone(platformId, platform, phoneClean);
       onboardingState.delete(String(platformId));
-      return `🎉 *You're all set!*\n\n` +
-        `Your GamaClaw bot is now *active and ready*.\n\n` +
-        `📊 View your dashboard:\n*gamaclaw.vercel.app/dashboard*\n\n` +
-        `Just send me a message to get started!\n` +
-        `Type */help* to see everything I can do. 🚀`;
+      return `🎉 *You're all set, ${userName || 'there'}!*\n\n` +
+        `Your GamaClaw bot is now *active*! 🚀\n\n` +
+        `📊 *View your dashboard:*\n👉 gamaclaw.vercel.app/dashboard\n\n` +
+        `━━━━━━━━━━━━━━━\n` +
+        `Try saying:\n` +
+        `• "What's the weather in Delhi?"\n` +
+        `• "Remind me at 9pm to call mom"\n` +
+        `• "Add task: Follow up with client"\n\n` +
+        `Type */help* to see everything I can do! 💪`;
     } else {
       return `Please send a *valid phone number* with country code.\n\nExample: \`+91 9876543210\``;
     }
   }
 
   // ── STEP 3: CHECK IF USER IS FULLY ONBOARDED ─────────────────────────────
-  // Block all messages from users who haven't linked + added phone yet
   const { data: dbUser } = await db.supabase
     .from('users')
     .select('phone, platform_id, auth_user_id')
@@ -271,7 +261,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     .maybeSingle();
 
   if (!dbUser || !dbUser.platform_id) {
-    // Not linked at all
     onboardingState.set(String(platformId), { step: 'awaiting_code' });
     return `👋 *Hi there!*\n\n` +
       `To use GamaClaw, first activate your account at:\n` +
@@ -280,15 +269,13 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   }
 
   if (!dbUser.phone) {
-    // Linked but phone missing
     onboardingState.set(String(platformId), { step: 'awaiting_phone' });
     return `📱 *Almost there!*\n\n` +
-      `I still need your phone number to activate your account.\n\n` +
-      `Please send it with country code:\n` +
+      `Please send your *phone number* to activate.\n\n` +
       `Example: \`+91 9876543210\``;
   }
 
-  // ── STEP 4: FULLY ONBOARDED — normal message processing ──────────────────
+  // ── STEP 4: FULLY ONBOARDED — normal processing ───────────────────────────
   const user = await db.getOrCreateUser(platformId, platform, userName);
   const p = getPending(user.id || platformId);
 
@@ -324,7 +311,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   // ── COMMANDS ──────────────────────────────────────────────────────────────
   if (text === '/start') {
     const earlyAdopterMsg = user.is_early_adopter
-      ? `\n\n🎖️ *You're one of our first 100 users!*\nYou get *FREE Pro access for 1 month* — enjoy all features on us! 🎉`
+      ? `\n\n🎖️ *You're one of our first 100 users!*\nYou get *FREE Pro access for 1 month* 🎉`
       : '';
     return `👋 *Welcome back, ${userName || 'there'}!*\n\nI'm your 24/7 AI personal assistant.` + earlyAdopterMsg + `\n\n` + helpMessage(user.plan);
   }
@@ -392,7 +379,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     } catch { return `❌ Could not link. Try again.`; }
   }
 
-  // ── DECLARE lowerTextCmd ──────────────────────────────────────────────────
   const lowerTextCmd = text.toLowerCase().trim();
 
   // ── MY OPT-IN LINK ────────────────────────────────────────────────────────
@@ -403,7 +389,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     return `🔗 *Your Client Opt-in Link*\n\n${link}\n\n📲 Share this with your clients.\nWhen they click it → they message your bot → you can schedule messages to them!\n\nThey'll be saved automatically under your leads.`;
   }
 
-  // ── SCHEDULED MESSAGES COMMANDS ───────────────────────────────────────────
+  // ── SCHEDULED MESSAGES ────────────────────────────────────────────────────
   if (lowerTextCmd === '/schedules' || lowerTextCmd === 'my schedules' || lowerTextCmd === 'show schedules') {
     if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) {
       return `📅 Scheduled messages are a *Pro feature*!${upgradeMessage(user.plan)}`;
@@ -442,7 +428,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       try {
         await emailSvc.sendEmail(pendingEmail.to, pendingEmail.subject, pendingEmail.body);
         await clearPendingEmail(user.id || platformId);
-        return `✅ *Email sent!*\n\n📧 To: ${pendingEmail.to}\n📝 ${pendingEmail.subject}\n\n_Delivered via GamaClaw _`;
+        return `✅ *Email sent!*\n\n📧 To: ${pendingEmail.to}\n📝 ${pendingEmail.subject}\n\n_Delivered via GamaClaw_`;
       } catch (e) { await clearPendingEmail(user.id || platformId); return `❌ Failed: ${e.message}`; }
     } else if (isCancel) {
       await clearPendingEmail(user.id || platformId);
@@ -482,10 +468,8 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   let userModel = 'groq';
   try { userModel = await db.getUserModel(user.id || platformId); } catch {}
 
-  // ── MULTI-LINE EXPENSE DETECTION ──────────────────────────────────────────
-  const expenseLines = text.split('\n').filter(l =>
-    /i spent|i paid|spent ₹|paid ₹/i.test(l)
-  );
+  // ── MULTI-LINE EXPENSE ────────────────────────────────────────────────────
+  const expenseLines = text.split('\n').filter(l => /i spent|i paid|spent ₹|paid ₹/i.test(l));
   if (expenseLines.length > 1) {
     let results = [];
     for (const line of expenseLines) {
@@ -508,21 +492,18 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     'UPI_HISTORY','SPORTS_SCORE','SOCIAL_POST','EMI_CALC','REVIEW_RESUME',
     'WRITE_CONTRACT','COMMODITY_PRICE','TRAIN_STATUS','TRACK_ORDER','TRANSCRIBE_MEETING',
     'ADD_TASK','VIEW_TASKS','COMPLETE_TASK','DELETE_TASK',
-    'GST_FILING','GST_SUMMARY',
-    'SCHEDULE_MESSAGE',
-    'CHAT'
+    'GST_FILING','GST_SUMMARY','SCHEDULE_MESSAGE','CHAT'
   ];
 
   const lowerCheck = text.toLowerCase();
 
-  // ── BULK DELETE REMINDERS ─────────────────────────────────────────────────
   if ((lowerCheck.includes('delete all') || lowerCheck.includes('clear all') || lowerCheck.includes('remove all')) &&
       (lowerCheck.includes('reminder') || lowerCheck.includes('reminders'))) {
     await db.supabase.from('reminders').update({ active: false }).eq('user_id', user.id || platformId);
     return '✅ All reminders cleared!';
   }
 
-  if ((lowerCheck.includes('delete reminder') || lowerCheck.includes('remove reminder') || lowerCheck.includes('cancel reminder'))) {
+  if (lowerCheck.includes('delete reminder') || lowerCheck.includes('remove reminder') || lowerCheck.includes('cancel reminder')) {
     const reminders = await db.getReminders(user.id || platformId);
     if (!reminders.length) return 'You have no active reminders!';
     const num = text.match(/\d+/);
@@ -536,17 +517,9 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     return `Which reminder to delete?\n\n` + reminders.map((r,i) => `${i+1}. ${r.text} (${r.time})`).join('\n') + `\n\nSay "Delete reminder 1"`;
   }
 
-  if ((lowerCheck.includes('generate') || lowerCheck.includes('create') || lowerCheck.includes('make') ||
-       lowerCheck.includes('बनाओ') || lowerCheck.includes('जेनरेट') || lowerCheck.includes('बना दो')) &&
-      (lowerCheck.includes('image') || lowerCheck.includes('photo') || lowerCheck.includes('picture') ||
-       lowerCheck.includes('इमेज') || lowerCheck.includes('फोटो') || lowerCheck.includes('तस्वीर'))) {
-    return `🖼️ I can't generate images yet — that feature is coming soon!\n\nBut I can help you with:\n• Writing a description of what you want\n• Finding similar images online\n• Anything else!\n\nWhat else can I help you with? `;
-  }
-
-  if (lowerCheck === 'delete all' || lowerCheck === 'clear all reminders' ||
-      lowerCheck === 'delete all reminders' || lowerCheck === 'remove all reminders') {
-    await db.supabase.from('reminders').update({ active: false }).eq('user_id', user.id || platformId);
-    return '✅ All reminders cleared! You have no active reminders now.';
+  if ((lowerCheck.includes('generate') || lowerCheck.includes('create') || lowerCheck.includes('make')) &&
+      (lowerCheck.includes('image') || lowerCheck.includes('photo') || lowerCheck.includes('picture'))) {
+    return `🖼️ Image generation is coming soon!\n\nWhat else can I help you with?`;
   }
 
   if ((lowerCheck.includes('remove') || lowerCheck.includes('delete') || lowerCheck.includes('cancel')) &&
@@ -558,7 +531,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       const idx = parseInt(num[0]) - 1;
       if (alerts[idx]) {
         await db.supabase.from('price_alerts').update({ active: false }).eq('id', alerts[idx].id);
-        return `✅ Done! Price alert for *${alerts[idx].item}* removed.`;
+        return `✅ Price alert for *${alerts[idx].item}* removed.`;
       }
     }
     return `🔔 *Your Price Alerts:*\n\n` +
@@ -566,22 +539,14 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       `\n\nWhich one to remove? Say "Remove alert 1"`;
   }
 
-  // ── FORCE CORRECT INTENTS ─────────────────────────────────────────────────
   let forcedIntent = null;
-  if (/^(write|draft|compose|create).*(email|mail)/i.test(lowerCheck) && !lowerCheck.includes('follow')) {
-    forcedIntent = 'SEND_EMAIL';
-  }
-  if (/kya|kaisa|karo|kaise|bhai|yaar|mujhe|mera|tera/i.test(lowerCheck) && lowerCheck.length > 15) {
-    forcedIntent = 'CHAT';
-  }
-  if (/schedule.*(message|msg|text|to)|send\s*(message|msg)?\s*(to\s+)?.*(every|daily|weekly|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|(message|msg|text).*every.*(day|week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday|am|pm)|every\s*(day|daily|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday).*(at\s*\d)/i.test(lowerCheck)) {
-    forcedIntent = 'SCHEDULE_MESSAGE';
-  }
+  if (/^(write|draft|compose|create).*(email|mail)/i.test(lowerCheck) && !lowerCheck.includes('follow')) forcedIntent = 'SEND_EMAIL';
+  if (/kya|kaisa|karo|kaise|bhai|yaar|mujhe|mera|tera/i.test(lowerCheck) && lowerCheck.length > 15) forcedIntent = 'CHAT';
+  if (/schedule.*(message|msg|text|to)|send\s*(message|msg)?\s*(to\s+)?.*(every|daily|weekly|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|(message|msg|text).*every.*(day|week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday|am|pm)|every\s*(day|daily|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday).*(at\s*\d)/i.test(lowerCheck)) forcedIntent = 'SCHEDULE_MESSAGE';
 
   let rawIntent = forcedIntent || 'CHAT';
   try { if (!forcedIntent) rawIntent = await ai.detectIntent(text); } catch {}
-  const intent = VALID_INTENTS.includes(rawIntent.trim().toUpperCase())
-    ? rawIntent.trim().toUpperCase() : 'CHAT';
+  const intent = VALID_INTENTS.includes(rawIntent.trim().toUpperCase()) ? rawIntent.trim().toUpperCase() : 'CHAT';
   const memoryCtx = await db.getMemoryString(user.id || platformId);
   const history = await db.getRecentMessages(user.id || platformId);
 
@@ -589,41 +554,26 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   switch (intent) {
 
     case 'SCHEDULE_MESSAGE': {
-      if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) {
-        return `📅 Scheduled messages are a *Pro feature*!${upgradeMessage(user.plan)}`;
-      }
+      if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) return `📅 Scheduled messages are a *Pro feature*!${upgradeMessage(user.plan)}`;
       const extracted = await ai.extractScheduledMessage(text);
-      if (!extracted) {
-        return `❌ I couldn't understand that.\n\nTry:\n"Schedule message to Rahul +919876543210 every Monday at 10am: Hi, just checking in!"`;
-      }
+      if (!extracted) return `❌ Try:\n"Schedule message to Rahul +919876543210 every Monday at 10am: Hi!"`;
       const { toPhone, toName, message, recurring, dayOfWeek, sendTime } = extracted;
-      if (!toPhone || !message || !sendTime) {
-        return `❌ I need a phone number, message and time.\n\nExample:\n"Schedule message to Rahul +919876543210 every Monday at 10am: Hi!"`;
-      }
+      if (!toPhone || !message || !sendTime) return `❌ I need a phone number, message and time.\n\nExample:\n"Schedule message to Rahul +919876543210 every Monday at 10am: Hi!"`;
       try {
         const { getNextRunTime } = require('../services/scheduledSender');
         const timezone = 'Asia/Kolkata';
         const nextRun = getNextRunTime(recurring, dayOfWeek, sendTime, timezone);
-        const newMsg = await db.createScheduledMessage(
-          user.id || platformId, platform, toPhone, toName, message, recurring, dayOfWeek, sendTime
-        );
+        const newMsg = await db.createScheduledMessage(user.id || platformId, platform, toPhone, toName, message, recurring, dayOfWeek, sendTime);
         await db.supabase.from('scheduled_messages').update({ next_run: nextRun, timezone }).eq('id', newMsg.id);
-        const recurrText = recurring === 'weekly' ? `every ${dayOfWeek}` : recurring;
-        return `✅ *Message Scheduled!*\n\n👤 To: ${toName || toPhone}\n💬 "${message}"\n🔄 ${recurrText} at ${sendTime}\n\nType */schedules* to manage.`;
-      } catch (e) {
-        console.error('Schedule message error:', e.message);
-        return `❌ Could not schedule. Try again.`;
-      }
+        return `✅ *Message Scheduled!*\n\n👤 To: ${toName || toPhone}\n💬 "${message}"\n🔄 ${recurring === 'weekly' ? `every ${dayOfWeek}` : recurring} at ${sendTime}\n\nType */schedules* to manage.`;
+      } catch (e) { return `❌ Could not schedule. Try again.`; }
     }
 
     case 'SEND_EMAIL': {
       const draft = await ai.draftEmail(text, memoryCtx);
       if (!draft) return '❌ Try: "Send email to john@gmail.com about meeting"';
       await savePendingEmail(user.id || platformId, draft);
-      if (!draft.to) {
-        p.awaitingEmailAddress = true;
-        return `📧 *Email Draft Ready!*\n\n*Subject:* ${draft.subject}\n\n${draft.body}\n\n❓ Who should I send this to?`;
-      }
+      if (!draft.to) { p.awaitingEmailAddress = true; return `📧 *Email Draft Ready!*\n\n*Subject:* ${draft.subject}\n\n${draft.body}\n\n❓ Who should I send this to?`; }
       p.awaitingEmailConfirm = true;
       return formatEmailPreview(draft);
     }
@@ -676,18 +626,12 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       const alerts = await db.getActivePriceAlerts(user.id || platformId);
       if (!alerts.length) return '🔔 No active price alerts.\n\nSay "Alert me when [product] drops below ₹[price]"';
       const num = text.match(/\d+/);
-      const wantsRemove = num && (text.toLowerCase().includes('remove') || text.toLowerCase().includes('delete') || text.toLowerCase().includes('cancel'));
+      const wantsRemove = num && (lowerCheck.includes('remove') || lowerCheck.includes('delete') || lowerCheck.includes('cancel'));
       if (wantsRemove) {
         const idx = parseInt(num[0]) - 1;
-        if (alerts[idx]) {
-          await db.supabase.from('price_alerts').update({ active: false }).eq('id', alerts[idx].id);
-          return `✅ *Price alert removed!*\n\n🗑️ "${alerts[idx].item}" deleted.`;
-        }
-        return `❌ Alert ${num[0]} not found.`;
+        if (alerts[idx]) { await db.supabase.from('price_alerts').update({ active: false }).eq('id', alerts[idx].id); return `✅ Alert removed!`; }
       }
-      return `🔔 *Your Price Alerts:*\n\n` +
-        alerts.map((a, i) => `${i+1}. ${a.item} — below ₹${Number(a.target_price).toLocaleString('en-IN')}`).join('\n') +
-        `\n\nSay "Remove alert 1" to delete.`;
+      return `🔔 *Your Price Alerts:*\n\n` + alerts.map((a,i) => `${i+1}. ${a.item} — below ₹${Number(a.target_price).toLocaleString('en-IN')}`).join('\n') + `\n\nSay "Remove alert 1" to delete.`;
     }
 
     case 'SAVE_MEMORY': {
@@ -715,9 +659,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       if (!db.PLAN_LIMITS[user.plan]?.features.includes('lead_followup')) return `🎯 Leads is a *Business feature*!${upgradeMessage(user.plan)}`;
       const leads = await db.getLeads(user.id || platformId);
       if (!leads.length) return '🎯 No leads yet.';
-      return `🎯 *Your Leads:*\n\n` + leads.slice(0,10).map((l,i) =>
-        `${i+1}. *${l.name}* (${l.status})\n   📧 ${l.email || 'no email'} | 🔗 ${l.source}`
-      ).join('\n\n');
+      return `🎯 *Your Leads:*\n\n` + leads.slice(0,10).map((l,i) => `${i+1}. *${l.name}* (${l.status})\n   📧 ${l.email || 'no email'} | 🔗 ${l.source}`).join('\n\n');
     }
 
     case 'DRAFT_FOLLOWUP': {
@@ -743,16 +685,13 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       const reminder = await ai.extractReminder(text, tz);
       if (!reminder) return '❌ Try: "Remind me daily at 9pm to check emails"';
       try { await db.saveReminder(user.id || platformId, reminder); } catch (e) { console.error('Reminder save error:', e.message); }
-      const recurText = reminder.recurring !== 'once' ? `\n🔄 ${reminder.recurring}` : '';
-      const dateText = reminder.date ? `\n📅 ${reminder.date}` : '';
-      return `⏰ *Reminder Set!*\n\n📝 ${reminder.text}\n🕐 ${reminder.time}${dateText}${recurText}`;
+      return `⏰ *Reminder Set!*\n\n📝 ${reminder.text}\n🕐 ${reminder.time}${reminder.date ? `\n📅 ${reminder.date}` : ''}${reminder.recurring !== 'once' ? `\n🔄 ${reminder.recurring}` : ''}`;
     }
 
     case 'VIEW_REMINDERS': {
       const reminders = await db.getReminders(user.id || platformId);
       if (!reminders.length) return '⏰ No active reminders.\n\nSay "Remind me daily at 7pm to call mom"';
-      return `⏰ *Your Reminders (${reminders.length}):*\n\n` +
-        reminders.map((r,i) => `${i+1}. *${r.text}*\n   🕐 ${r.time} · 🔄 ${r.recurring}`).join('\n\n');
+      return `⏰ *Your Reminders (${reminders.length}):*\n\n` + reminders.map((r,i) => `${i+1}. *${r.text}*\n   🕐 ${r.time} · 🔄 ${r.recurring}`).join('\n\n');
     }
 
     case 'ADD_TASK': {
@@ -765,52 +704,41 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     case 'VIEW_TASKS': {
       const tasks = await db.getTasks(user.id || platformId);
       if (!tasks.length) return `📋 *No pending tasks!*\n\nAdd one: "Add task: Call client tomorrow"`;
-      const taskList = tasks.map((t,i) =>
+      return `📋 *Your Tasks (${tasks.length}):*\n\n` + tasks.map((t,i) =>
         `${i+1}. ${t.priority === 'high' ? '🔥' : t.priority === 'medium' ? '📌' : '📋'} *${t.title}*${t.due_date ? `\n   📅 ${t.due_date}` : ''}`
-      ).join('\n\n');
-      return `📋 *Your Tasks (${tasks.length}):*\n\n${taskList}\n\nSay "Done task 1" or "Delete task 2"`;
+      ).join('\n\n') + `\n\nSay "Done task 1" or "Delete task 2"`;
     }
 
     case 'COMPLETE_TASK': {
       const allTasksC = await db.getTasks(user.id || platformId);
-      if (!allTasksC.length) return `You have no pending tasks right now! 📋\n\nAdd one: "Add task: Call client tomorrow"`;
+      if (!allTasksC.length) return `You have no pending tasks! 📋`;
       const numC = text.match(/\d+/);
-      if (!numC) {
-        return `Which task did you finish? 🎉\n\n` + allTasksC.map((t,i) => `${i+1}. ${t.title}`).join('\n') + `\n\nSay "Done task 1"`;
-      }
+      if (!numC) return `Which task did you finish?\n\n` + allTasksC.map((t,i) => `${i+1}. ${t.title}`).join('\n') + `\n\nSay "Done task 1"`;
       const idxC = parseInt(numC[0]) - 1;
-      if (!allTasksC[idxC]) {
-        return `Hmm, I don't see task ${numC[0]}. Here are your tasks:\n\n` + allTasksC.map((t,i) => `${i+1}. ${t.title}`).join('\n');
-      }
+      if (!allTasksC[idxC]) return `Task ${numC[0]} not found.`;
       await db.completeTask(allTasksC[idxC].id);
       return `✅ *${allTasksC[idxC].title}* — done! Great work 💪🎉`;
     }
 
     case 'DELETE_TASK': {
       const allTasksD = await db.getTasks(user.id || platformId);
-      if (!allTasksD.length) return `You have no tasks to delete! 📋`;
+      if (!allTasksD.length) return `You have no tasks to delete!`;
       const numD = text.match(/\d+/);
-      if (!numD) {
-        return `Which task do you want to delete?\n\n` + allTasksD.map((t,i) => `${i+1}. ${t.title}`).join('\n') + `\n\nSay "Delete task 1"`;
-      }
+      if (!numD) return `Which task?\n\n` + allTasksD.map((t,i) => `${i+1}. ${t.title}`).join('\n') + `\n\nSay "Delete task 1"`;
       const idxD = parseInt(numD[0]) - 1;
-      if (!allTasksD[idxD]) {
-        return `I don't see task ${numD[0]}. Here are your tasks:\n\n` + allTasksD.map((t,i) => `${i+1}. ${t.title}`).join('\n');
-      }
+      if (!allTasksD[idxD]) return `Task ${numD[0]} not found.`;
       await db.deleteTask(allTasksD[idxD].id);
       return `🗑️ "${allTasksD[idxD].title}" deleted!`;
     }
 
     case 'GST_FILING': {
       if (!db.PLAN_LIMITS[user.plan]?.features.includes('expense')) return `🧾 GST Filing is a *Pro feature*!${upgradeMessage(user.plan)}`;
-      const expenses = await db.getExpenseSummary(user.id || platformId, 30);
-      return await ai.generateGSTFiling(text, expenses, memoryCtx);
+      return await ai.generateGSTFiling(text, await db.getExpenseSummary(user.id || platformId, 30), memoryCtx);
     }
 
     case 'GST_SUMMARY': {
       if (!db.PLAN_LIMITS[user.plan]?.features.includes('expense')) return `🧾 GST Summary is a *Pro feature*!${upgradeMessage(user.plan)}`;
-      const expenses = await db.getExpenseSummary(user.id || platformId, 30);
-      return await ai.generateGSTSummary(expenses);
+      return await ai.generateGSTSummary(await db.getExpenseSummary(user.id || platformId, 30));
     }
 
     case 'INVOICE': {
@@ -842,32 +770,23 @@ async function processMessage(platformId, platform, messageText, userName = '', 
 
     default: {
       const lowerText = text.toLowerCase();
-
-      if (lowerText.includes('image') || lowerText.includes('photo') || lowerText.includes('picture') ||
-          lowerText.includes('इमेज') || lowerText.includes('फोटो') || lowerText.includes('generate image')) {
-        return `🖼️ Image generation is not available yet in GamaClaw.\n\nI can help you with:\n• Writing descriptions\n• Finding information about the topic\n• Other tasks!\n\nWhat else can I help you with? `;
-      }
-
+      if (lowerText.includes('image') || lowerText.includes('generate image')) return `🖼️ Image generation coming soon!\n\nWhat else can I help with?`;
       if (lowerText.includes('gst') || (lowerText.includes('tax') && lowerText.includes('%'))) {
         const result = await ai.calculateGST(text).catch(() => null);
         if (result) { await db.saveMessage(user.id || platformId, 'user', text); await db.saveMessage(user.id || platformId, 'assistant', result); return result; }
       }
-
       if (lowerText.includes('sip') || (lowerText.includes('invest') && lowerText.includes('month') && lowerText.includes('year'))) {
         const result = await ai.calculateSIP(text).catch(() => null);
         if (result) { await db.saveMessage(user.id || platformId, 'user', text); await db.saveMessage(user.id || platformId, 'assistant', result); return result; }
       }
-
       if ((lowerText.includes('emi') || lowerText.includes('loan')) && (lowerText.includes('%') || lowerText.includes('lakh'))) {
         const result = await ai.calculateEMI(text).catch(() => null);
         if (result && !result.includes('❌')) { await db.saveMessage(user.id || platformId, 'user', text); await db.saveMessage(user.id || platformId, 'assistant', result); return result; }
       }
-
       if (lowerText.includes('weather') || lowerText.includes('temperature') || lowerText.includes('mausam')) {
         const result = await ai.getWeather(text).catch(() => null);
         if (result && !result.includes('❌')) { await db.saveMessage(user.id || platformId, 'user', text); await db.saveMessage(user.id || platformId, 'assistant', result); return result; }
       }
-
       const reply = await ai.chat(text, history, memoryCtx, userModel);
       await db.saveMessage(user.id || platformId, 'user', text);
       await db.saveMessage(user.id || platformId, 'assistant', reply);
