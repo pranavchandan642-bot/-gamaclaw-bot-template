@@ -3,6 +3,10 @@ const db = require('../services/db');
 const emailSvc = require('../services/email');
 const calendarSvc = require('../services/calendar');
 
+// ── ONBOARDING STATE ──────────────────────────────────────────────────────────
+// Tracks users mid-onboarding: 'awaiting_code' | 'awaiting_phone'
+const onboardingState = new Map();
+
 async function runAutoMemory(userId, userMessage) {
   try {
     const result = await ai.extractAutoMemory(userMessage);
@@ -26,7 +30,7 @@ async function savePendingEmail(userId, emailData) {
   pendingCache[userId] = pendingCache[userId] || {};
   pendingCache[userId].pendingEmail = emailData;
   pendingCache[userId].awaitingEmailConfirm = true;
-  await db.saveMemory(userId, 'pending_email', JSON.stringify(emailData)).catch(()=>{});
+  await db.saveMemory(userId, 'pending_email', JSON.stringify(emailData)).catch(() => {});
 }
 
 async function loadPendingEmail(userId) {
@@ -49,7 +53,7 @@ async function clearPendingEmail(userId) {
     pendingCache[userId].pendingEmail = null;
     pendingCache[userId].awaitingEmailConfirm = false;
   }
-  await db.deleteMemory(userId, 'pending_email').catch(()=>{});
+  await db.deleteMemory(userId, 'pending_email').catch(() => {});
 }
 
 function upgradeMessage(plan) {
@@ -125,8 +129,166 @@ function helpMessage(plan) {
     (!isPro ? `⭐ Type */upgrade* to unlock calendar, expenses, GST & more!` : `🎉 You have full Pro access!`);
 }
 
+// ── ONBOARDING HELPERS ────────────────────────────────────────────────────────
+
+// Try to claim a linking code and attach platform_id to the auth account
+async function tryLinkCode(code, platformId, platform, name) {
+  try {
+    const { data: linkRow } = await db.supabase
+      .from('linking_codes')
+      .select('*')
+      .eq('code', code)
+      .eq('used', false)
+      .gt('expires_at', new Date().toISOString())
+      .single();
+
+    if (!linkRow) return { success: false };
+
+    // Mark code as used
+    await db.supabase
+      .from('linking_codes')
+      .update({ used: true })
+      .eq('code', code);
+
+    // Upsert user — link bot platform_id to their Google auth account
+    await db.supabase
+      .from('users')
+      .upsert({
+        auth_user_id: linkRow.auth_user_id,
+        platform_id: String(platformId),
+        platform,
+        name,
+        email: linkRow.auth_email,
+        plan: 'free',
+      }, { onConflict: 'auth_user_id' });
+
+    return { success: true, authUserId: linkRow.auth_user_id };
+  } catch (e) {
+    console.error('tryLinkCode error:', e);
+    return { success: false };
+  }
+}
+
+// Save phone number to users table
+async function savePhone(platformId, platform, phone) {
+  try {
+    await db.supabase
+      .from('users')
+      .update({ phone })
+      .eq('platform_id', String(platformId))
+      .eq('platform', platform);
+  } catch (e) {
+    console.error('savePhone error:', e);
+  }
+}
+
 // ── MAIN PROCESSOR ────────────────────────────────────────────────────────────
 async function processMessage(platformId, platform, messageText, userName = '', audioBase64 = null) {
+
+  let text = messageText?.trim() || '';
+  text = text.replace(/^["'""]|["'""]$/g, '').trim();
+
+  // ── STEP 1: HANDLE /start (always, before DB checks) ─────────────────────
+  if (text === '/start' || text.startsWith('/start ')) {
+    const parts = text.split(' ');
+    const codeFromDeepLink = parts[1];
+
+    if (codeFromDeepLink && /^\d{6}$/.test(codeFromDeepLink)) {
+      // Deep-link with code — try to link immediately
+      const linked = await tryLinkCode(codeFromDeepLink, platformId, platform, userName);
+      if (linked.success) {
+        onboardingState.set(String(platformId), { step: 'awaiting_phone' });
+        return `✅ *Code accepted! Welcome, ${userName || 'there'}!*\n\n` +
+          `📱 *One last step* — please share your phone number to activate your account.\n\n` +
+          `Just type it with country code:\n` +
+          `Example: \`+91 9876543210\`\n\n` +
+          `_This is required to use GamaClaw._`;
+      } else {
+        onboardingState.set(String(platformId), { step: 'awaiting_code' });
+        return `👋 *Welcome to GamaClaw!*\n\n` +
+          `That code didn't work — it may have expired.\n\n` +
+          `Please go to *gamaclaw.vercel.app/activate* to get a fresh code, then send it here.`;
+      }
+    } else {
+      // Plain /start — ask for connect code
+      onboardingState.set(String(platformId), { step: 'awaiting_code' });
+      return `👋 *Welcome to GamaClaw!*\n\n` +
+        `To activate your bot, I need your *connect code*.\n\n` +
+        `1️⃣ Go to *gamaclaw.vercel.app/activate*\n` +
+        `2️⃣ Sign in with Google\n` +
+        `3️⃣ Copy the 6-digit code shown on the page\n` +
+        `4️⃣ Send it here\n\n` +
+        `Already have your code? Just send it now! 👇`;
+    }
+  }
+
+  // ── STEP 2: HANDLE ONBOARDING STATE (code + phone entry) ─────────────────
+  const obState = onboardingState.get(String(platformId));
+
+  if (obState?.step === 'awaiting_code') {
+    const trimmed = text.replace(/\s+/g, '').replace(/-/g, '');
+    if (/^\d{6}$/.test(trimmed)) {
+      const linked = await tryLinkCode(trimmed, platformId, platform, userName);
+      if (linked.success) {
+        onboardingState.set(String(platformId), { step: 'awaiting_phone' });
+        return `✅ *Code accepted!*\n\n` +
+          `📱 Now please share your *phone number* to complete activation.\n\n` +
+          `Type it with country code:\n` +
+          `Example: \`+91 9876543210\`\n\n` +
+          `_This is required to start using GamaClaw._`;
+      } else {
+        return `❌ That code is *invalid or expired*.\n\n` +
+          `Please go to *gamaclaw.vercel.app/activate* and copy a fresh 6-digit code.`;
+      }
+    } else {
+      return `Please send your *6-digit connect code* from:\n*gamaclaw.vercel.app/activate*\n\nExample: \`482910\``;
+    }
+  }
+
+  if (obState?.step === 'awaiting_phone') {
+    const phoneRaw = text.trim();
+    const phoneClean = phoneRaw.replace(/[\s\-().]/g, '');
+    if (phoneClean.length >= 8 && /^[\+0-9]+$/.test(phoneClean)) {
+      await savePhone(platformId, platform, phoneClean);
+      onboardingState.delete(String(platformId));
+      return `🎉 *You're all set!*\n\n` +
+        `Your GamaClaw bot is now *active and ready*.\n\n` +
+        `📊 View your dashboard:\n*gamaclaw.vercel.app/dashboard*\n\n` +
+        `Just send me a message to get started!\n` +
+        `Type */help* to see everything I can do. 🚀`;
+    } else {
+      return `Please send a *valid phone number* with country code.\n\nExample: \`+91 9876543210\``;
+    }
+  }
+
+  // ── STEP 3: CHECK IF USER IS FULLY ONBOARDED ─────────────────────────────
+  // Block all messages from users who haven't linked + added phone yet
+  const { data: dbUser } = await db.supabase
+    .from('users')
+    .select('phone, platform_id, auth_user_id')
+    .eq('platform_id', String(platformId))
+    .eq('platform', platform)
+    .maybeSingle();
+
+  if (!dbUser || !dbUser.platform_id) {
+    // Not linked at all
+    onboardingState.set(String(platformId), { step: 'awaiting_code' });
+    return `👋 *Hi there!*\n\n` +
+      `To use GamaClaw, first activate your account at:\n` +
+      `*gamaclaw.vercel.app/activate*\n\n` +
+      `Then send me your 6-digit connect code here.`;
+  }
+
+  if (!dbUser.phone) {
+    // Linked but phone missing
+    onboardingState.set(String(platformId), { step: 'awaiting_phone' });
+    return `📱 *Almost there!*\n\n` +
+      `I still need your phone number to activate your account.\n\n` +
+      `Please send it with country code:\n` +
+      `Example: \`+91 9876543210\``;
+  }
+
+  // ── STEP 4: FULLY ONBOARDED — normal message processing ──────────────────
   const user = await db.getOrCreateUser(platformId, platform, userName);
   const p = getPending(user.id || platformId);
 
@@ -141,9 +303,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   if (!limitCheck.allowed) {
     return `⛔ You've used all *${limitCheck.limit}* messages for today on the *${limitCheck.plan}* plan.\n\nResets at midnight! ${upgradeMessage(limitCheck.plan)}`;
   }
-
-  let text = messageText?.trim() || '';
-  text = text.replace(/^["'""]|["'""]$/g, '').trim();
 
   const setModelMatch = text.match(/^\/?\s*set\s*model\s*(.*)$/i);
   if (setModelMatch) {
@@ -167,7 +326,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     const earlyAdopterMsg = user.is_early_adopter
       ? `\n\n🎖️ *You're one of our first 100 users!*\nYou get *FREE Pro access for 1 month* — enjoy all features on us! 🎉`
       : '';
-    return `👋 *Welcome to GamaClaw, ${userName || 'there'}!*\n\nI'm your 24/7 AI personal assistant.` + earlyAdopterMsg + `\n\n` + helpMessage(user.plan);
+    return `👋 *Welcome back, ${userName || 'there'}!*\n\nI'm your 24/7 AI personal assistant.` + earlyAdopterMsg + `\n\n` + helpMessage(user.plan);
   }
 
   if (text === '/help') return helpMessage(user.plan);
@@ -221,27 +380,19 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     } catch { return `❌ Could not link. Try again.`; }
   }
 
-  // ── AUTO DETECT PHONE ─────────────────────────────────────────────────────
-  const phoneMatch = text.match(/^(\+?[0-9]{10,13})$/);
-  if (phoneMatch) {
-    const phone = phoneMatch[1].startsWith('+') ? phoneMatch[1] : '+91' + phoneMatch[1];
-    try { await db.linkPhone(user.id, phone); return `✅ *Phone linked!*\n\n📱 ${phone} 🎉`; }
-    catch { return `❌ Could not link. Try: */link +91XXXXXXXXXX*`; }
-  }
-
   // ── CONNECT ───────────────────────────────────────────────────────────────
   if (text.startsWith('/connect')) {
     const code = text.replace('/connect', '').trim();
-    if (!code || code.length !== 6) return `🔗 Usage: */connect 123456*\n\nGet code from *gamaclaw.vercel.app/dashboard*`;
+    if (!code || code.length !== 6) return `🔗 Usage: */connect 123456*\n\nGet code from *gamaclaw.vercel.app/activate*`;
     try {
       const result = await db.claimLinkingCode(platformId, platform, code);
       if (result.success) return `✅ *Dashboard linked!*\n\n🌐 gamaclaw.vercel.app/dashboard`;
-      if (result.reason === 'expired') return `⏱ Code expired! Get a new one from dashboard.`;
+      if (result.reason === 'expired') return `⏱ Code expired! Get a new one from the activate page.`;
       return `❌ Invalid code.`;
     } catch { return `❌ Could not link. Try again.`; }
   }
 
-  // ── DECLARE lowerTextCmd HERE — before any code that uses it ─────────────
+  // ── DECLARE lowerTextCmd ──────────────────────────────────────────────────
   const lowerTextCmd = text.toLowerCase().trim();
 
   // ── MY OPT-IN LINK ────────────────────────────────────────────────────────
