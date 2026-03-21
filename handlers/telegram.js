@@ -63,11 +63,11 @@ bot.on('message', async (msg) => {
       const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_TOKEN}/${fileInfo.file_path}`;
       const audioRes = await axios.get(fileUrl, { responseType: 'arraybuffer' });
       const audioBase64 = Buffer.from(audioRes.data).toString('base64');
-      response = await processMessage(platformId, 'telegram', null, userName, audioBase64);
+      response = await processMessage(platformId, 'telegram', null, userName, audioBase64, chatId);
     } else {
       const text = msg.text?.trim();
       if (!text) return;
-      response = await processMessage(platformId, 'telegram', text, userName);
+      response = await processMessage(platformId, 'telegram', text, userName, null, chatId);
     }
 
     // ── SEND RESPONSE ───────────────────────────────────────────────────────
