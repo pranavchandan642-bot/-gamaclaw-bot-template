@@ -683,7 +683,7 @@ async function generateInvoicePDF(details) {
   const { PassThrough } = require('stream');
 
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    const doc = new PDFDocument({ margin: 0, size: 'A4' });
     const stream = new PassThrough();
     const chunks = [];
 
@@ -692,63 +692,109 @@ async function generateInvoicePDF(details) {
     stream.on('error', reject);
     doc.pipe(stream);
 
-    const total = details.items.reduce((s, i) => s + i.amount, 0);
+    const W = 595.28;
+    const total = details.items.reduce((s, i) => s + Number(i.amount), 0);
     const sym = details.currency === 'USD' ? '$' : '₹';
-    const green = '#00c87a';
-    const dark  = '#111111';
-    const gray  = '#666666';
-    const light = '#f5f5f5';
 
-    // ── Header bar ──
-    doc.rect(0, 0, 595, 90).fill(dark);
-    doc.fontSize(28).fillColor('#ffffff').font('Helvetica-Bold').text('INVOICE', 50, 28);
-    doc.fontSize(11).fillColor(green).font('Helvetica').text(details.invoice_number, 50, 62);
-    doc.fontSize(10).fillColor('#aaaaaa').text(`Date: ${new Date().toLocaleDateString('en-IN')}`, 400, 28, { align: 'right', width: 145 });
-    if (details.due_date) {
-      doc.text(`Due: ${details.due_date}`, 400, 44, { align: 'right', width: 145 });
-    }
+    const BLACK = '#0a0a0a';
+    const GREEN = '#00c47a';
+    const LGRAY = '#f7f8fa';
+    const MGRAY = '#e2e6ea';
+    const DGRAY = '#6c757d';
+    const WHITE = '#ffffff';
 
-    // ── Bill To ──
-    doc.moveDown(3);
-    doc.fontSize(9).fillColor(gray).font('Helvetica-Bold').text('BILL TO', 50, 110);
-    doc.moveDown(0.3);
-    doc.fontSize(14).fillColor(dark).font('Helvetica-Bold').text(details.client_name, 50, 124);
+    // Top accent bar
+    doc.rect(0, 0, W, 6).fill(GREEN);
+
+    // Header
+    doc.rect(0, 6, W, 100).fill(BLACK);
+    doc.fontSize(26).fillColor(WHITE).font('Helvetica-Bold').text('GamaClaw', 48, 28);
+    doc.fontSize(9).fillColor(GREEN).font('Helvetica').text('AI-Powered Business Assistant', 48, 58);
+    doc.fontSize(9).fillColor('#aaaaaa').font('Helvetica').text('gamaclawbot@gmail.com  ·  gamaclaw.vercel.app', 48, 74);
+    doc.fontSize(32).fillColor(WHITE).font('Helvetica-Bold').text('INVOICE', 300, 22, { align: 'right', width: 247 });
+    doc.fontSize(10).fillColor(GREEN).font('Helvetica-Bold').text(details.invoice_number || 'INV-001', 300, 62, { align: 'right', width: 247 });
+
+    // Info strip
+    doc.rect(0, 106, W, 1).fill(GREEN);
+    doc.rect(0, 107, W, 52).fill(LGRAY);
+    const dateStr = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' });
+    const dueStr = details.due_date ? new Date(details.due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' }) : 'On Receipt';
+    doc.fontSize(8).fillColor(DGRAY).font('Helvetica-Bold')
+      .text('DATE ISSUED', 48, 120).text('DUE DATE', 200, 120)
+      .text('INVOICE NO', 352, 120).text('AMOUNT DUE', 460, 120);
+    doc.fontSize(10).fillColor(BLACK).font('Helvetica-Bold')
+      .text(dateStr, 48, 133).text(dueStr, 200, 133)
+      .text(details.invoice_number || 'INV-001', 352, 133)
+      .text(`${sym}${total.toLocaleString('en-IN')}`, 460, 133);
+    doc.rect(0, 159, W, 1).fill(MGRAY);
+
+    // Bill To / From
+    doc.rect(0, 160, W, 90).fill(WHITE);
+    doc.fontSize(8).fillColor(DGRAY).font('Helvetica-Bold').text('BILL TO', 48, 178);
+    doc.rect(48, 190, 30, 2).fill(GREEN);
+    doc.fontSize(16).fillColor(BLACK).font('Helvetica-Bold').text(details.client_name, 48, 198);
     if (details.client_email) {
-      doc.fontSize(10).fillColor(gray).font('Helvetica').text(details.client_email, 50, 142);
+      doc.fontSize(9).fillColor(DGRAY).font('Helvetica').text(details.client_email, 48, 218);
     }
+    doc.fontSize(8).fillColor(DGRAY).font('Helvetica-Bold').text('FROM', 350, 178);
+    doc.rect(350, 190, 30, 2).fill(GREEN);
+    doc.fontSize(16).fillColor(BLACK).font('Helvetica-Bold').text('GamaClaw', 350, 198);
+    doc.fontSize(9).fillColor(DGRAY).font('Helvetica').text('gamaclawbot@gmail.com', 350, 218);
+    doc.rect(0, 250, W, 1).fill(MGRAY);
 
-    // ── From ──
-    doc.fontSize(9).fillColor(gray).font('Helvetica-Bold').text('FROM', 350, 110);
-    doc.fontSize(14).fillColor(dark).font('Helvetica-Bold').text('GamaClaw', 350, 124);
-    doc.fontSize(10).fillColor(gray).font('Helvetica').text('gamaclawbot@gmail.com', 350, 142);
+    // Table header
+    doc.rect(0, 251, W, 32).fill(BLACK);
+    doc.fontSize(9).fillColor(WHITE).font('Helvetica-Bold')
+      .text('DESCRIPTION', 48, 262)
+      .text('QTY', 360, 262, { width: 60, align: 'center' })
+      .text('UNIT PRICE', 420, 262, { width: 80, align: 'right' })
+      .text('AMOUNT', 500, 262, { width: 80, align: 'right' });
 
-    // ── Table header ──
-    const tableTop = 185;
-    doc.rect(50, tableTop, 495, 28).fill(dark);
-    doc.fontSize(10).fillColor('#ffffff').font('Helvetica-Bold')
-      .text('DESCRIPTION', 60, tableTop + 9)
-      .text('AMOUNT', 460, tableTop + 9, { align: 'right', width: 75 });
-
-    // ── Table rows ──
-    let y = tableTop + 28;
+    // Table rows
+    let y = 283;
     details.items.forEach((item, i) => {
-      if (i % 2 === 0) doc.rect(50, y, 495, 26).fill(light);
-      doc.fontSize(10).fillColor(dark).font('Helvetica')
-        .text(item.description, 60, y + 8)
-        .text(`${sym}${Number(item.amount).toLocaleString('en-IN')}`, 460, y + 8, { align: 'right', width: 75 });
-      y += 26;
+      const rowH = 36;
+      doc.rect(0, y, W, rowH).fill(i % 2 === 0 ? LGRAY : WHITE);
+      if (i === 0) doc.rect(0, y, 4, rowH).fill(GREEN);
+      doc.fontSize(10).fillColor(BLACK).font('Helvetica-Bold').text(item.description, 48, y + 12, { width: 290 });
+      doc.fontSize(10).fillColor(DGRAY).font('Helvetica')
+        .text('1', 360, y + 12, { width: 60, align: 'center' })
+        .text(`${sym}${Number(item.amount).toLocaleString('en-IN')}`, 420, y + 12, { width: 80, align: 'right' });
+      doc.fontSize(10).fillColor(BLACK).font('Helvetica-Bold')
+        .text(`${sym}${Number(item.amount).toLocaleString('en-IN')}`, 500, y + 12, { width: 80, align: 'right' });
+      y += rowH;
     });
 
-    // ── Total bar ──
+    // Totals
     y += 10;
-    doc.rect(50, y, 495, 36).fill(green);
-    doc.fontSize(13).fillColor('#ffffff').font('Helvetica-Bold')
-      .text('TOTAL', 60, y + 11)
-      .text(`${sym}${total.toLocaleString('en-IN')}`, 460, y + 11, { align: 'right', width: 75 });
+    doc.rect(0, y, W, 1).fill(MGRAY);
+    y += 14;
+    doc.fontSize(10).fillColor(DGRAY).font('Helvetica').text('Subtotal', 380, y, { width: 120, align: 'right' });
+    doc.fontSize(10).fillColor(BLACK).font('Helvetica').text(`${sym}${total.toLocaleString('en-IN')}`, 500, y, { width: 80, align: 'right' });
+    y += 18;
+    doc.fontSize(10).fillColor(DGRAY).font('Helvetica').text('Tax (0%)', 380, y, { width: 120, align: 'right' });
+    doc.fontSize(10).fillColor(BLACK).font('Helvetica').text(`${sym}0`, 500, y, { width: 80, align: 'right' });
+    y += 20;
+    doc.rect(350, y, W - 350, 1).fill(MGRAY);
+    y += 12;
 
-    // ── Footer ──
-    doc.fontSize(9).fillColor(gray).font('Helvetica')
-      .text('Generated by GamaClaw 🦀  ·  gamaclaw.vercel.app', 50, 760, { align: 'center', width: 495 });
+    // Total bar
+    doc.rect(320, y, W - 320, 42).fill(GREEN);
+    doc.fontSize(11).fillColor(WHITE).font('Helvetica-Bold').text('TOTAL DUE', 340, y + 14, { width: 140 });
+    doc.fontSize(16).fillColor(WHITE).font('Helvetica-Bold').text(`${sym}${total.toLocaleString('en-IN')}`, 460, y + 10, { width: 120, align: 'right' });
+    y += 60;
+
+    // Payment note
+    if (y < 700) {
+      doc.rect(48, y, W - 96, 48).fillAndStroke('#f0fdf7', GREEN);
+      doc.fontSize(9).fillColor(BLACK).font('Helvetica-Bold').text('Payment Instructions', 64, y + 10);
+      doc.fontSize(9).fillColor(DGRAY).font('Helvetica').text('Please process payment by the due date. For UPI or bank transfer details, contact us.', 64, y + 24, { width: W - 128 });
+    }
+
+    // Footer
+    doc.rect(0, 800, W, 41).fill(BLACK);
+    doc.rect(0, 800, W, 3).fill(GREEN);
+    doc.fontSize(8).fillColor('#aaaaaa').font('Helvetica').text('Generated by GamaClaw  ·  gamaclaw.vercel.app  ·  gamaclawbot@gmail.com', 0, 816, { align: 'center', width: W });
 
     doc.end();
   });
@@ -765,8 +811,8 @@ Return JSON: {
   "reminderMessage": "the message to send to client"
 }
 Examples:
-"Remind Rahul +919876543210 to pay ₹5000 tomorrow" → {"clientName":"Rahul","clientPhone":"919876543210","amount":5000,"daysLater":1,"reminderMessage":"Hi Rahul, just a reminder that ₹5,000 payment is due. Please process it at your earliest convenience. Thanks!"}
-"Send payment reminder to John +918765432109 for ₹15000 in 3 days" → {"clientName":"John","clientPhone":"918765432109","amount":15000,"daysLater":3,"reminderMessage":"Hi John, this is a reminder that your payment of ₹15,000 is due in 3 days. Please arrange the transfer. Thank you!"}`);
+"Remind Rahul +919876543210 to pay 5000 tomorrow" → {"clientName":"Rahul","clientPhone":"919876543210","amount":5000,"daysLater":1,"reminderMessage":"Hi Rahul, just a reminder that your payment of 5000 is due. Please process it at your earliest convenience. Thanks!"}
+"Send payment reminder to John +918765432109 for 15000 in 3 days" → {"clientName":"John","clientPhone":"918765432109","amount":15000,"daysLater":3,"reminderMessage":"Hi John, this is a reminder that your payment of 15000 is due in 3 days. Please arrange the transfer. Thank you!"}`);
 }
 module.exports = {
   askWithModel, askGroq, askClaude, askGPT, askGemini, ask, askJSON,
