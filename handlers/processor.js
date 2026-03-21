@@ -145,16 +145,38 @@ async function tryLinkCode(code, platformId, platform, name) {
       .update({ used: true })
       .eq('code', code);
 
-    await db.supabase
-      .from('users')
-      .upsert({
-        auth_user_id: linkRow.auth_user_id,
-        platform_id: String(platformId),
-        platform,
-        name,
-        email: linkRow.auth_email,
-        plan: 'free',
-      }, { onConflict: 'auth_user_id' });
+     // Check if user row already exists by platform_id
+const { data: existingRow } = await db.supabase
+  .from('users')
+  .select('id, plan, is_early_adopter')
+  .eq('platform_id', String(platformId))
+  .eq('platform', platform)
+  .maybeSingle();
+
+if (existingRow) {
+  // Update existing row — preserve plan and early adopter status
+  await db.supabase
+    .from('users')
+    .update({
+      auth_user_id: linkRow.auth_user_id,
+      email: linkRow.auth_email,
+      name,
+    })
+    .eq('platform_id', String(platformId))
+    .eq('platform', platform);
+} else {
+  // New user — insert fresh row
+  await db.supabase
+    .from('users')
+    .insert({
+      auth_user_id: linkRow.auth_user_id,
+      platform_id: String(platformId),
+      platform,
+      name,
+      email: linkRow.auth_email,
+      plan: 'free',
+    });
+}
 
     return { success: true };
   } catch (e) {
