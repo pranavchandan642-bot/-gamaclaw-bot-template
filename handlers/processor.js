@@ -186,32 +186,71 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     const parts = text.split(' ');
     const codeFromDeepLink = parts[1];
 
-    // Always set state to awaiting_code first
+    // Always check DB first — don't rely on memory state
+    const { data: existingUser } = await db.supabase
+      .from('users')
+      .select('platform_id, phone')
+      .eq('platform_id', String(platformId))
+      .eq('platform', platform)
+      .maybeSingle();
+
+    // Already fully onboarded — welcome back
+    if (existingUser?.platform_id && existingUser?.phone) {
+      const user = await db.getOrCreateUser(platformId, platform, userName);
+      return `👋 *Welcome back, ${userName || 'there'}!*\n\n` + helpMessage(user.plan);
+    }
+
+    // Linked but no phone yet
+    if (existingUser?.platform_id && !existingUser?.phone) {
+      onboardingState.set(String(platformId), { step: 'awaiting_phone' });
+      return `📱 Please send your *phone number* to activate.\n\nExample: \`+91 9876543210\``;
+    }
+
+    // Not linked — ask for code
     onboardingState.set(String(platformId), { step: 'awaiting_code' });
 
     if (codeFromDeepLink && /^\d{6}$/.test(codeFromDeepLink)) {
-      // Deep link included the code — show it as hint, user just needs to send it
       return `👋 *Welcome to GamaClaw, ${userName || 'there'}!*\n\n` +
         `I can see your connect code from the website.\n\n` +
         `Just send me this code to activate:\n\n` +
         `🔑 *${codeFromDeepLink}*\n\n` +
         `_(Just type it or copy-paste it below)_ 👇`;
-    } else {
-      return `👋 *Welcome to GamaClaw!*\n\n` +
-        `To activate your bot:\n\n` +
-        `1️⃣ Go to *gamaclaw.vercel.app/activate*\n` +
-        `2️⃣ Sign in with Google\n` +
-        `3️⃣ Copy the 6-digit code shown on that page\n` +
-        `4️⃣ Send it here\n\n` +
-        `Already have your code? Just send the 6 digits now! 👇`;
     }
+
+    return `👋 *Welcome to GamaClaw!*\n\n` +
+      `To activate your bot:\n\n` +
+      `1️⃣ Go to *gamaclaw.vercel.app/activate*\n` +
+      `2️⃣ Sign in with Google\n` +
+      `3️⃣ Copy the 6-digit code shown on that page\n` +
+      `4️⃣ Send it here\n\n` +
+      `Already have your code? Just send the 6 digits now! 👇`;
   }
 
   // ── STEP 2: HANDLE ONBOARDING STATE ──────────────────────────────────────
-  const obState = onboardingState.get(String(platformId));
+  let obState = onboardingState.get(String(platformId));
+
+  // Recover state from DB if bot restarted and lost memory
+  if (!obState) {
+    const { data: recovering } = await db.supabase
+      .from('users')
+      .select('platform_id, phone')
+      .eq('platform_id', String(platformId))
+      .eq('platform', platform)
+      .maybeSingle();
+
+    if (recovering?.platform_id && !recovering?.phone) {
+      obState = { step: 'awaiting_phone' };
+      onboardingState.set(String(platformId), obState);
+    } else if (!recovering?.platform_id) {
+      const trimmed = text.replace(/\s+/g, '').replace(/-/g, '');
+      if (/^\d{6}$/.test(trimmed)) {
+        obState = { step: 'awaiting_code' };
+        onboardingState.set(String(platformId), obState);
+      }
+    }
+  }
 
   if (obState?.step === 'awaiting_code') {
-    // Accept plain 6 digits — /connect prefix not required
     const trimmed = text.replace(/\s+/g, '').replace(/-/g, '').replace('/connect', '').trim();
     if (/^\d{6}$/.test(trimmed)) {
       const linked = await tryLinkCode(trimmed, platformId, platform, userName);
@@ -550,7 +589,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   const memoryCtx = await db.getMemoryString(user.id || platformId);
   const history = await db.getRecentMessages(user.id || platformId);
 
-  // ── ROUTE BY INTENT ───────────────────────────────────────────────────────
   switch (intent) {
 
     case 'SCHEDULE_MESSAGE': {
@@ -558,7 +596,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       const extracted = await ai.extractScheduledMessage(text);
       if (!extracted) return `❌ Try:\n"Schedule message to Rahul +919876543210 every Monday at 10am: Hi!"`;
       const { toPhone, toName, message, recurring, dayOfWeek, sendTime } = extracted;
-      if (!toPhone || !message || !sendTime) return `❌ I need a phone number, message and time.\n\nExample:\n"Schedule message to Rahul +919876543210 every Monday at 10am: Hi!"`;
+      if (!toPhone || !message || !sendTime) return `❌ I need a phone number, message and time.`;
       try {
         const { getNextRunTime } = require('../services/scheduledSender');
         const timezone = 'Asia/Kolkata';
