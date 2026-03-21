@@ -694,7 +694,7 @@ async function generateInvoicePDF(details) {
 
     const W = 595.28;
     const total = details.items.reduce((s, i) => s + Number(i.amount), 0);
-    const sym = details.currency === 'USD' ? '$' : '₹';
+    const sym = details.currency === 'USD' ? '$' : 'Rs.';
 
     const BLACK = '#0a0a0a';
     const GREEN = '#00c47a';
