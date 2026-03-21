@@ -83,30 +83,6 @@ bot.on('message', async (msg) => {
       });
     }
 
-    // ── ASK FOR PHONE ON /start ─────────────────────────────────────────────
-    if (msg.text?.trim() === '/start') {
-      // Check if phone already linked
-      const user = await db.getOrCreateUser(platformId, 'telegram', userName);
-      if (!user.phone) {
-        setTimeout(async () => {
-          await bot.sendMessage(chatId,
-            `📱 *One more thing!*\n\nShare your phone number to link your account across WhatsApp & Discord — so your plan works everywhere!`,
-            {
-              parse_mode: 'Markdown',
-              reply_markup: {
-                keyboard: [[{
-                  text: '📱 Share My Phone Number',
-                  request_contact: true,
-                }]],
-                resize_keyboard: true,
-                one_time_keyboard: true,
-              },
-            }
-          );
-        }, 1500);
-      }
-    }
-
   } catch (err) {
     console.error('Telegram error:', err.message, err.stack);
     const isDev = process.env.NODE_ENV !== 'production';
