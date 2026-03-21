@@ -623,7 +623,46 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       }
     } catch (e) { console.error('Payment reminder error:', e.message); }
   }
+ // ── AUTO FOLLOW-UP DETECTION ──────────────────────────────────────────────────
+const isFollowUp = (
+  (lowerCheck.includes('follow up') || lowerCheck.includes('followup') || lowerCheck.includes('follow-up')) &&
+  (lowerCheck.match(/\+\d{10,}/) || lowerCheck.match(/\d{10}/))
+);
 
+if (isFollowUp) {
+  if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) {
+    return `🔄 Auto follow-up is a *Pro feature*!${upgradeMessage(user.plan)}`;
+  }
+  try {
+    const phoneMatch = text.match(/\+?[0-9]{10,13}/);
+    const nameMatch = text.match(/(?:with|to)\s+([A-Za-z]+)/i);
+    const toPhone = phoneMatch ? phoneMatch[0].replace(/\s/g, '') : null;
+    const toName = nameMatch ? nameMatch[1] : null;
+
+    if (!toPhone) {
+      return `❌ Please include a phone number.\n\nExample:\n"Follow up with Rahul +919876543210"`;
+    }
+
+    const days = await scheduleFollowUps(user, platformId, platform, toPhone, toName);
+
+    const planFollowUps = {
+      free: '1 follow-up (day 2)',
+      pro: '3 follow-ups (day 2, 5, 10)',
+      business: '5 follow-ups (day 1, 3, 7, 14, 30)',
+    };
+
+    return `🔄 *Auto Follow-up Scheduled!*\n\n` +
+      `👤 Contact: *${toName || toPhone}*\n` +
+      `📱 ${toPhone}\n` +
+      `📅 ${planFollowUps[user.plan]}\n\n` +
+      `*Messages will be sent automatically.*\n` +
+      `Type */schedules* to view or cancel.\n\n` +
+      (user.plan === 'free' ? `⭐ Upgrade to Pro for 3 follow-ups!` : '');
+  } catch (e) {
+    console.error('Follow-up error:', e.message);
+    return `❌ Could not schedule follow-ups. Try again.`;
+  }
+}
   // ── INTENT DETECTION ──────────────────────────────────────────────────────
   const VALID_INTENTS = [
     'SEND_EMAIL','READ_CALENDAR','ADD_CALENDAR','SUMMARIZE',
@@ -986,5 +1025,54 @@ async function handleBriefing(user) {
     return `☀️ *Good morning, ${user.name || 'there'}!*\n\n📅 Calendar: Not connected\n💰 Expenses: No data yet`;
   }
 }
+// ── AUTO FOLLOW-UP SCHEDULER ──────────────────────────────────────────────────
+async function scheduleFollowUps(user, platformId, platform, toPhone, toName) {
+  const { getNextRunTime } = require('../services/scheduledSender');
+  const timezone = 'Asia/Kolkata';
 
+  // Follow-up schedules by plan
+  const followUpDays = {
+    free:     [2],
+    pro:      [2, 5, 10],
+    business: [1, 3, 7, 14, 30],
+  };
+
+  const followUpMessages = [
+    `Hi ${toName || 'there'}, just following up on my previous message. Please let me know if you have any questions!`,
+    `Hi ${toName || 'there'}, checking in again. Would love to hear back from you when you get a chance.`,
+    `Hi ${toName || 'there'}, this is my final follow-up. Feel free to reach out whenever you're ready!`,
+    `Hi ${toName || 'there'}, hope all is well. I'm still available if you'd like to connect.`,
+    `Hi ${toName || 'there'}, just a gentle reminder. Looking forward to hearing from you.`,
+  ];
+
+  const days = followUpDays[user.plan] || followUpDays.free;
+
+  for (let i = 0; i < days.length; i++) {
+    const sendDate = new Date();
+    sendDate.setDate(sendDate.getDate() + days[i]);
+    const sendTime = `${sendDate.getHours().toString().padStart(2,'0')}:00`;
+
+    const message = followUpMessages[i] || followUpMessages[followUpMessages.length - 1];
+
+    try {
+      const newMsg = await db.createScheduledMessage(
+        user.id || platformId, platform,
+        toPhone, toName, message, 'once', null, sendTime
+      );
+      const nextRun = getNextRunTime('once', null, sendTime, timezone);
+      // Override next_run to be on the correct future date
+      const futureRun = new Date(sendDate);
+      const [h, m] = sendTime.split(':');
+      futureRun.setHours(parseInt(h), parseInt(m), 0, 0);
+      await db.supabase
+        .from('scheduled_messages')
+        .update({ next_run: futureRun.toISOString(), timezone })
+        .eq('id', newMsg.id);
+    } catch (e) {
+      console.error('Follow-up schedule error:', e.message);
+    }
+  }
+
+  return days;
+}
 module.exports = { processMessage };
