@@ -95,35 +95,48 @@ async function upgradeOptions(userId = null, userEmail = '', userName = '') {
     `_Payment auto-upgrades your account instantly!_ ✅`;
 }
 
+// ── IMPROVED HELP MESSAGE ─────────────────────────────────────────────────────
 function helpMessage(plan) {
   const isPro = plan === 'pro' || plan === 'business';
-  return ` *GamaClaw — Your 24/7 AI Assistant*\n\n` +
-    `*📧 Email*\n"Send an email to john@acme.com about project delay"\n\n` +
-    `*💬 Chat*\n"What's the capital of France?" / "Write a tweet about AI"\n\n` +
-    `*📝 Summarize*\n"Summarize: [paste meeting notes]"\n\n` +
-    `*✅ Tasks*\n"Add task: Call Rahul tomorrow" / "Show my tasks" / "Done task 1"\n\n` +
-    (isPro ? `*📅 Calendar*\n"Show my meetings" / "Add standup tomorrow 10am"\n\n` : '') +
-    (isPro ? `*💰 Expenses*\n"I spent ₹450 on lunch" / "Show my expenses"\n\n` : '') +
-    (isPro ? `*🧾 GST*\n"GST summary" / "Help me file GST this month"\n\n` : '') +
-    (isPro ? `*🔔 Price Alerts*\n"Alert me when iPhone drops below ₹60000"\n\n` : '') +
-    (isPro ? `*🧠 Memory*\n"Remember my boss email is john@acme.com"\n\n` : '') +
-    (isPro ? `*☀️ Briefing*\n"/briefing" — Get your daily summary\n\n` : '') +
-    (isPro ? `*📅 Scheduled Messages*\n"Schedule message to Rahul +919876543210 every Monday at 10am: Hi, checking in!"\n"/schedules" — View all · "Cancel schedule 1"\n\n` : '') +
-    (plan === 'business' ? `*🎯 Leads*\n"Add lead: John from LinkedIn"\n"Show my leads"\n\n` : '') +
-    `*🌤️ Weather:* "Weather in Mumbai"\n` +
-    `*📰 News:* "Latest news about AI startups"\n` +
-    `*✈️ Flights:* "Flights Delhi to Mumbai tomorrow"\n` +
-    `*🚂 Trains:* "Trains Mumbai to Pune Friday"\n` +
-    `*🌍 Translate:* "Translate hello to Hindi"\n` +
-    `*🏏 Sports:* "India cricket score"\n` +
-    `*📱 Social:* "Write LinkedIn post about my startup"\n` +
-    `*🧮 EMI:* "EMI for ₹40L at 8.5% 20 years"\n` +
-    `*⏰ Remind:* "Remind me daily at 7pm to call mom"\n` +
-    `*🧾 Invoice:* "Invoice for Rahul ₹15,000 design work"\n` +
-    `*🏦 Gold Price:* "What's today's gold price?"\n` +
-    `*💳 UPI:* Paste any UPI SMS to parse it\n\n` +
-    `*/plan* — View your plan\n*/upgrade* — See pricing\n*/setmodel* — Switch AI model\n*/briefing* — Daily summary\n*/schedules* — Scheduled messages\n*/help* — This message\n\n` +
-    (!isPro ? `⭐ Type */upgrade* to unlock calendar, expenses, GST & more!` : `🎉 You have full Pro access!`);
+  return `🦀 *GamaClaw — Your 24/7 AI Assistant*\n\n` +
+
+    `━━━ 📋 PRODUCTIVITY ━━━\n` +
+    `✅ *Tasks* — "Add task: Call Rahul tomorrow"\n` +
+    `⏰ *Reminders* — "Remind me at 9pm to send invoice"\n` +
+    `📧 *Email* — "Send email to john@acme.com about delay"\n` +
+    `🧾 *Invoice* — "Invoice Rahul ₹15,000 for web design"\n` +
+    (isPro ? `📅 *Calendar* — "Add standup tomorrow 10am"\n` : '') +
+    (isPro ? `💰 *Expenses* — "I spent ₹450 on lunch"\n` : '') +
+    (isPro ? `🎯 *Payment Reminder* — "Remind Rahul +91XXXXXX to pay ₹5000 tomorrow"\n` : '') +
+
+    `\n━━━ 💬 AI CHAT ━━━\n` +
+    `"Write a LinkedIn post about my startup"\n` +
+    `"Summarize: [paste meeting notes]"\n` +
+    `"Help me write a contract for freelance work"\n` +
+
+    `\n━━━ 📊 FINANCE ━━━\n` +
+    `🧮 "EMI for ₹40L at 8.5% 20 years"\n` +
+    `🧾 "GST on ₹10,000 at 18%"\n` +
+    `📈 "SIP ₹5000/month for 10 years at 12%"\n` +
+    `🏦 "Gold price today"\n` +
+    (isPro ? `🔔 "Alert me when iPhone drops below ₹60,000"\n` : '') +
+
+    `\n━━━ 🌍 SEARCH & INFO ━━━\n` +
+    `🌤️ "Weather in Mumbai"\n` +
+    `📰 "Latest news about AI startups"\n` +
+    `✈️ "Flights Delhi to Mumbai tomorrow"\n` +
+    `🚂 "Trains Mumbai to Pune Friday"\n` +
+    `🏏 "India cricket score"\n` +
+    `🌍 "Translate hello to French"\n` +
+
+    `\n━━━ ⚙️ COMMANDS ━━━\n` +
+    `*/plan* — Your plan & usage\n` +
+    `*/upgrade* — See pricing\n` +
+    `*/setmodel* — Switch AI model\n` +
+    `*/briefing* — Daily summary\n` +
+    `*/schedules* — Scheduled messages\n` +
+    `*/help* — This menu\n\n` +
+    (!isPro ? `⭐ *Upgrade to Pro* for 15+ more features!\nType */upgrade* to see plans.` : `🎉 You have full Pro access!`);
 }
 
 // ── ONBOARDING HELPERS ────────────────────────────────────────────────────────
@@ -145,38 +158,38 @@ async function tryLinkCode(code, platformId, platform, name) {
       .update({ used: true })
       .eq('code', code);
 
-     // Check if user row already exists by platform_id
-const { data: existingRow } = await db.supabase
-  .from('users')
-  .select('id, plan, is_early_adopter')
-  .eq('platform_id', String(platformId))
-  .eq('platform', platform)
-  .maybeSingle();
+    // Check if user row already exists by platform_id
+    const { data: existingRow } = await db.supabase
+      .from('users')
+      .select('id, plan, is_early_adopter')
+      .eq('platform_id', String(platformId))
+      .eq('platform', platform)
+      .maybeSingle();
 
-if (existingRow) {
-  // Update existing row — preserve plan and early adopter status
-  await db.supabase
-    .from('users')
-    .update({
-      auth_user_id: linkRow.auth_user_id,
-      email: linkRow.auth_email,
-      name,
-    })
-    .eq('platform_id', String(platformId))
-    .eq('platform', platform);
-} else {
-  // New user — insert fresh row
-  await db.supabase
-    .from('users')
-    .insert({
-      auth_user_id: linkRow.auth_user_id,
-      platform_id: String(platformId),
-      platform,
-      name,
-      email: linkRow.auth_email,
-      plan: 'free',
-    });
-}
+    if (existingRow) {
+      // Update existing row — preserve plan and early adopter status
+      await db.supabase
+        .from('users')
+        .update({
+          auth_user_id: linkRow.auth_user_id,
+          email: linkRow.auth_email,
+          name,
+        })
+        .eq('platform_id', String(platformId))
+        .eq('platform', platform);
+    } else {
+      // New user — insert fresh row
+      await db.supabase
+        .from('users')
+        .insert({
+          auth_user_id: linkRow.auth_user_id,
+          platform_id: String(platformId),
+          platform,
+          name,
+          email: linkRow.auth_email,
+          plan: 'free',
+        });
+    }
 
     return { success: true };
   } catch (e) {
@@ -197,8 +210,31 @@ async function savePhone(platformId, platform, phone) {
   }
 }
 
+// ── SEND FILE HELPER (Telegram) ───────────────────────────────────────────────
+async function sendTelegramDocument(chatId, buffer, filename, caption) {
+  try {
+    const fetch = require('node-fetch');
+    const FormData = require('form-data');
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    form.append('document', buffer, { filename, contentType: 'application/pdf' });
+    if (caption) form.append('caption', caption);
+    form.append('parse_mode', 'Markdown');
+
+    const token = process.env.TELEGRAM_TOKEN;
+    await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+      method: 'POST',
+      body: form,
+    });
+    return true;
+  } catch (e) {
+    console.error('sendTelegramDocument error:', e.message);
+    return false;
+  }
+}
+
 // ── MAIN PROCESSOR ────────────────────────────────────────────────────────────
-async function processMessage(platformId, platform, messageText, userName = '', audioBase64 = null) {
+async function processMessage(platformId, platform, messageText, userName = '', audioBase64 = null, chatId = null) {
 
   let text = messageText?.trim() || '';
   text = text.replace(/^["'""]|["'""]$/g, '').trim();
@@ -208,7 +244,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     const parts = text.split(' ');
     const codeFromDeepLink = parts[1];
 
-    // Always check DB first — don't rely on memory state
     const { data: existingUser } = await db.supabase
       .from('users')
       .select('platform_id, phone')
@@ -216,19 +251,16 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       .eq('platform', platform)
       .maybeSingle();
 
-    // Already fully onboarded — welcome back
     if (existingUser?.platform_id && existingUser?.phone) {
       const user = await db.getOrCreateUser(platformId, platform, userName);
       return `👋 *Welcome back, ${userName || 'there'}!*\n\n` + helpMessage(user.plan);
     }
 
-    // Linked but no phone yet
     if (existingUser?.platform_id && !existingUser?.phone) {
       onboardingState.set(String(platformId), { step: 'awaiting_phone' });
       return `📱 Please send your *phone number* to activate.\n\nExample: \`+91 9876543210\``;
     }
 
-    // Not linked — ask for code
     onboardingState.set(String(platformId), { step: 'awaiting_code' });
 
     if (codeFromDeepLink && /^\d{6}$/.test(codeFromDeepLink)) {
@@ -251,7 +283,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   // ── STEP 2: HANDLE ONBOARDING STATE ──────────────────────────────────────
   let obState = onboardingState.get(String(platformId));
 
-  // Recover state from DB if bot restarted and lost memory
   if (!obState) {
     const { data: recovering } = await db.supabase
       .from('users')
@@ -299,15 +330,21 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     if (phoneClean.length >= 8 && /^[\+0-9]+$/.test(phoneClean)) {
       await savePhone(platformId, platform, phoneClean);
       onboardingState.delete(String(platformId));
+
+      // ── IMPROVED ONBOARDING COMPLETE MESSAGE ──
       return `🎉 *You're all set, ${userName || 'there'}!*\n\n` +
         `Your GamaClaw bot is now *active*! 🚀\n\n` +
-        `📊 *View your dashboard:*\n👉 gamaclaw.vercel.app/dashboard\n\n` +
+        `📊 *Dashboard:* gamaclaw.vercel.app/dashboard\n\n` +
         `━━━━━━━━━━━━━━━\n` +
-        `Try saying:\n` +
-        `• "What's the weather in Delhi?"\n` +
-        `• "Remind me at 9pm to call mom"\n` +
-        `• "Add task: Follow up with client"\n\n` +
-        `Type */help* to see everything I can do! 💪`;
+        `*Try these right now:*\n\n` +
+        `1️⃣ "What's the weather in Delhi?"\n` +
+        `2️⃣ "Remind me at 9pm to follow up with client"\n` +
+        `3️⃣ "Add task: Send proposal by Friday"\n` +
+        `4️⃣ "Invoice Rahul ₹10,000 for design work"\n` +
+        `5️⃣ "Write a LinkedIn post about my startup"\n\n` +
+        `━━━━━━━━━━━━━━━\n` +
+        `Type */help* to see all 40+ things I can do! 💪\n\n` +
+        `_Powered by GamaClaw 🦀_`;
     } else {
       return `Please send a *valid phone number* with country code.\n\nExample: \`+91 9876543210\``;
     }
@@ -343,7 +380,7 @@ async function processMessage(platformId, platform, messageText, userName = '', 
   if (!db.canAccessPlatform(platform, user.plan)) {
     return `🔒 *WhatsApp & Discord access requires Pro or Business plan!*\n\n` +
       `You're currently on the *FREE* plan.\n\n` +
-      `👉 Message us on Telegram @GamaClawBot and type */upgrade*\n\n` +
+      `👉 Message us on Telegram @gamaclaw_bot and type */upgrade*\n\n` +
       `🚀 *Pro* — ₹499/month\n🏢 *Business* — ₹2,999/month`;
   }
 
@@ -363,9 +400,16 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       return `🎤 Voice notes are a *Pro feature*!${upgradeMessage(user.plan)}`;
     }
     try {
-      text = await ai.transcribeAndDetect(audioBase64);
-    } catch {
-      return '❌ Could not process voice note. Please try again.';
+      const transcribed = await ai.transcribeAndDetect(audioBase64);
+      if (!transcribed || transcribed.includes('Could not transcribe')) {
+        return `❌ *Couldn't understand the audio.*\n\nTips:\n• Speak clearly and close to mic\n• Keep under 10MB\n• Avoid background noise\n\nOr just type your message! 💬`;
+      }
+      // Extract just the text (remove INTENT: line)
+      text = transcribed.split('\nINTENT:')[0].trim();
+      if (!text) return `❌ Audio was unclear. Please try again or type your message.`;
+    } catch (e) {
+      console.error('Voice note error:', e.message);
+      return `❌ Voice processing failed. Please type your message instead.`;
     }
   }
 
@@ -543,6 +587,43 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     if (results.length) return `💰 *${results.length} Expenses Logged!*\n\n${results.join('\n')}`;
   }
 
+  // ── PAYMENT REMINDER DETECTION ────────────────────────────────────────────
+  const lowerCheck = text.toLowerCase();
+  const isPaymentReminder = (
+    (lowerCheck.includes('remind') || lowerCheck.includes('reminder')) &&
+    (lowerCheck.includes('pay') || lowerCheck.includes('payment') || lowerCheck.includes('invoice')) &&
+    (lowerCheck.includes('+') || lowerCheck.match(/\d{10}/))
+  );
+
+  if (isPaymentReminder && ai.extractPaymentReminder) {
+    if (!db.PLAN_LIMITS[user.plan]?.features.includes('briefing')) {
+      return `📅 Payment reminders are a *Pro feature*!${upgradeMessage(user.plan)}`;
+    }
+    try {
+      const reminder = await ai.extractPaymentReminder(text);
+      if (reminder?.clientPhone && reminder?.reminderMessage) {
+        const sendAt = new Date();
+        sendAt.setDate(sendAt.getDate() + (reminder.daysLater || 1));
+        const sendTime = `${sendAt.getHours().toString().padStart(2,'0')}:00`;
+        const newMsg = await db.createScheduledMessage(
+          user.id || platformId, platform,
+          reminder.clientPhone, reminder.clientName,
+          reminder.reminderMessage, 'once', null, sendTime
+        );
+        const { getNextRunTime } = require('../services/scheduledSender');
+        const nextRun = getNextRunTime('once', null, sendTime, 'Asia/Kolkata');
+        await db.supabase.from('scheduled_messages').update({ next_run: nextRun, timezone: 'Asia/Kolkata' }).eq('id', newMsg.id);
+        return `✅ *Payment Reminder Scheduled!*\n\n` +
+          `👤 To: *${reminder.clientName || reminder.clientPhone}*\n` +
+          `📱 ${reminder.clientPhone}\n` +
+          (reminder.amount ? `💰 Amount: ₹${Number(reminder.amount).toLocaleString('en-IN')}\n` : '') +
+          `📅 Sends in: ${reminder.daysLater || 1} day(s)\n\n` +
+          `*Message preview:*\n"${reminder.reminderMessage}"\n\n` +
+          `Type */schedules* to manage.`;
+      }
+    } catch (e) { console.error('Payment reminder error:', e.message); }
+  }
+
   // ── INTENT DETECTION ──────────────────────────────────────────────────────
   const VALID_INTENTS = [
     'SEND_EMAIL','READ_CALENDAR','ADD_CALENDAR','SUMMARIZE',
@@ -555,8 +636,6 @@ async function processMessage(platformId, platform, messageText, userName = '', 
     'ADD_TASK','VIEW_TASKS','COMPLETE_TASK','DELETE_TASK',
     'GST_FILING','GST_SUMMARY','SCHEDULE_MESSAGE','CHAT'
   ];
-
-  const lowerCheck = text.toLowerCase();
 
   if ((lowerCheck.includes('delete all') || lowerCheck.includes('clear all') || lowerCheck.includes('remove all')) &&
       (lowerCheck.includes('reminder') || lowerCheck.includes('reminders'))) {
@@ -801,12 +880,46 @@ async function processMessage(platformId, platform, messageText, userName = '', 
       return await ai.generateGSTSummary(await db.getExpenseSummary(user.id || platformId, 30));
     }
 
+    // ── INVOICE WITH PDF ──────────────────────────────────────────────────────
     case 'INVOICE': {
       const invoiceDetails = await ai.extractInvoiceDetails(text);
       if (!invoiceDetails) return '❌ Try: "Invoice for Rahul ₹15,000 for web design"';
+
       const invoiceText = await ai.generateInvoiceText(invoiceDetails);
+
+      // Try to generate and send PDF if on Telegram
+      if (platform === 'telegram' && chatId && ai.generateInvoicePDF) {
+        try {
+          const pdfBuffer = await ai.generateInvoicePDF(invoiceDetails);
+          const filename = `${invoiceDetails.invoice_number || 'Invoice'}.pdf`;
+          const sent = await sendTelegramDocument(chatId, pdfBuffer, filename,
+            `🧾 *${invoiceDetails.invoice_number}* — ${invoiceDetails.client_name}`);
+          if (sent) {
+            // Also email if client email exists
+            if (invoiceDetails.client_email) {
+              p.pendingEmail = {
+                to: invoiceDetails.client_email,
+                subject: `Invoice ${invoiceDetails.invoice_number}`,
+                body: invoiceText.replace(/[*_]/g, '')
+              };
+              p.awaitingEmailConfirm = true;
+              return `📧 Want to email this invoice to *${invoiceDetails.client_email}*?\n\nReply *SEND* ✅ or *CANCEL* ❌`;
+            }
+            return `✅ Invoice PDF sent!`;
+          }
+        } catch (e) {
+          console.error('PDF generation error:', e.message);
+          // Fall through to text invoice
+        }
+      }
+
+      // Fallback: text invoice
       if (invoiceDetails.client_email) {
-        p.pendingEmail = { to: invoiceDetails.client_email, subject: `Invoice ${invoiceDetails.invoice_number}`, body: invoiceText.replace(/[*_]/g, '') };
+        p.pendingEmail = {
+          to: invoiceDetails.client_email,
+          subject: `Invoice ${invoiceDetails.invoice_number}`,
+          body: invoiceText.replace(/[*_]/g, '')
+        };
         p.awaitingEmailConfirm = true;
         return `${invoiceText}\n\nReply *SEND* to email or *CANCEL* to skip.`;
       }
