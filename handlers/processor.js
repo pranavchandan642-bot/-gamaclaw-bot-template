@@ -560,7 +560,15 @@ async function processMessage(platformId, platform, messageText, userName = '', 
 
   if (p.awaitingEmailAddress) {
     const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-    if (match) {
+      if (match) {
+  // ✅ ADD THIS CHECK
+  if (!p.pendingEmail) {
+    p.pendingEmail = {
+      to: null,
+      subject: '',
+      body: '',
+    };
+  }
       p.pendingEmail.to = match[0];
       p.awaitingEmailAddress = false;
       p.awaitingEmailConfirm = true;
